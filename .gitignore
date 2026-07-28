@@ -60,3 +60,6 @@ app.*.map.json
 .vscode/
 *.iml
 .idea/
+
+# APK artifacts
+*.apk
