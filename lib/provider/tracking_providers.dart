@@ -85,3 +85,22 @@ final addTrackingProvider = Provider<Future<void> Function({
     } catch (_) {}
   };
 });
+
+/// 追跡番号を削除するプロバイダー
+final deleteTrackingProvider = Provider<Future<void> Function({
+  required String trackingNumber,
+  required String carrier,
+})>((ref) {
+  final dbFuture = ref.watch(databaseProvider.future);
+
+  return ({
+    required String trackingNumber,
+    required String carrier,
+  }) async {
+    final db = await dbFuture;
+    final saved = await db.findByTrackingNumber(trackingNumber, carrier);
+    if (saved != null) {
+      await db.deleteTracking(saved.id);
+    }
+  };
+});

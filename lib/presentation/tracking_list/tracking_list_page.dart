@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:trackflow/domain/entities/tracking_info.dart';
 import 'package:trackflow/presentation/tracking_list/widgets/empty_state.dart';
 import 'package:trackflow/presentation/tracking_list/widgets/tracking_card.dart';
 import 'package:trackflow/provider/tracking_providers.dart';
@@ -11,6 +12,31 @@ class TrackingListPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final trackingsAsync = ref.watch(trackingListProvider);
+    final theme = Theme.of(context);
+
+    Future<bool> confirmDismiss(TrackingInfo info) async {
+      return await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('追跡を削除'),
+              content: Text('${info.trackingNumber}\nこの追跡を削除しますか？'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('キャンセル'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: theme.colorScheme.error,
+                  ),
+                  child: const Text('削除'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -26,16 +52,41 @@ class TrackingListPage extends ConsumerWidget {
               ref.invalidate(trackingListProvider);
             },
             child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               itemCount: trackings.length,
               itemBuilder: (context, index) {
                 final info = trackings[index];
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: TrackingCard(
-                    info: info,
-                    onTap: () => context.push(
-                        '/detail/${info.trackingNumber}?carrier=${info.carrier.name}'),
+                  child: Dismissible(
+                    key: ValueKey(
+                        '${info.trackingNumber}_${info.carrier.name}'),
+                    direction: DismissDirection.endToStart,
+                    confirmDismiss: (_) => confirmDismiss(info),
+                    onDismissed: (_) async {
+                      final deleteFn = ref.read(deleteTrackingProvider);
+                      await deleteFn(
+                        trackingNumber: info.trackingNumber,
+                        carrier: info.carrier.name,
+                      );
+                      ref.invalidate(trackingListProvider);
+                    },
+                    background: Container(
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.only(right: 20),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.error,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(Icons.delete_outline,
+                          color: theme.colorScheme.onError, size: 28),
+                    ),
+                    child: TrackingCard(
+                      info: info,
+                      onTap: () => context.push(
+                          '/detail/${info.trackingNumber}?carrier=${info.carrier.name}'),
+                    ),
                   ),
                 );
               },

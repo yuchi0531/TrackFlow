@@ -36,6 +36,9 @@ dependencies:
   # Date / Time
   intl: ^0.19.0
 
+  # External browser
+  url_launcher: ^6.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
