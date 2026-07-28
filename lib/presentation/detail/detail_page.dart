@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:trackflow/core/constants/carrier_urls.dart';
-import 'package:trackflow/domain/entities/carrier.dart';
 import 'package:trackflow/presentation/detail/widgets/delivery_estimate.dart';
 import 'package:trackflow/presentation/detail/widgets/status_header.dart';
 import 'package:trackflow/presentation/detail/widgets/tracking_timeline.dart';
@@ -18,23 +15,6 @@ class DetailPage extends ConsumerWidget {
     this.carrier = 'japanPost',
   });
 
-  void _openPublicUrl() async {
-    final uri = Uri.parse(_publicUrl());
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-
-  String _publicUrl() {
-    final carrierEnum = Carrier.fromString(carrier);
-    switch (carrierEnum) {
-      case Carrier.japanPost:
-        return CarrierUrls.japanPostPublicUrl(trackingNumber);
-      case Carrier.yamato:
-        return CarrierUrls.yamatoPublicUrl(trackingNumber);
-      case Carrier.sagawa:
-        return CarrierUrls.sagawaPublicUrl(trackingNumber);
-    }
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final trackingAsync = ref.watch(trackingDetailProvider(
@@ -44,13 +24,6 @@ class DetailPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('追跡詳細'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.open_in_browser),
-            tooltip: '公式サイトで開く',
-            onPressed: _openPublicUrl,
-          ),
-        ],
       ),
       body: trackingAsync.when(
         data: (data) => ListView(

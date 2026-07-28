@@ -14,18 +14,6 @@ class CarrierUrls {
   static const sagawaTrackingUrl =
       'https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do';
 
-  /// 日本郵便 公開追跡URL（番号付き）
-  static String japanPostPublicUrl(String number) =>
-      'https://trackings.post.japanpost.jp/services/srv/search/direct?reqCodeNo1=$number&locale=ja';
-
-  /// ヤマト運輸 公開追跡URL（番号付き）
-  static String yamatoPublicUrl(String number) =>
-      'https://toi.kuronekoyamato.co.jp/cgi-bin/tneko?number01=$number';
-
-  /// 佐川急便 公開追跡URL（番号付き）
-  static String sagawaPublicUrl(String number) =>
-      'https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do?okurijoNo=$number';
-
   /// User-Agent（全社共通）
   static const userAgent =
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
