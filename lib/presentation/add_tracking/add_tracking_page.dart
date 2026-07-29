@@ -21,9 +21,8 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
   @override
   void initState() {
     super.initState();
-    _numberController.addListener(() {
-      setState(() {});
-    });
+    // 追跡番号入力時にボタンの有効/無効を切り替える
+    _numberController.addListener(() => setState(() {}));
   }
 
   @override
@@ -77,6 +76,7 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final canSubmit = _numberController.text.trim().isNotEmpty && !_isSubmitting;
     return Scaffold(
       appBar: AppBar(
         title: const Text('追跡を追加'),
@@ -115,10 +115,14 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: _numberController.text.trim().isNotEmpty
-                    ? _submit
-                    : null,
-                child: const Text('追跡を開始'),
+                onPressed: canSubmit ? _submit : null,
+                child: _isSubmitting
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('追跡を開始'),
               ),
             ),
           ],

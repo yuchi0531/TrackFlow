@@ -95,6 +95,51 @@ class AppDatabase extends _$AppDatabase {
         .getSingleOrNull();
   }
 
+  /// 全アクティブな追跡に対する最新の履歴を一括取得
+  /// trackingNumber+carrierの組み合わせごとに最新の履歴を返す。
+  /// auto-increment IDを使用（INSERT順が更新順と等価であることを前提）。
+  Future<Map<String, TrackingHistory>> getAllLatestHistories() async {
+    final maxIdRows = await (selectOnly(trackingHistories)
+          ..addColumns([trackingHistories.id.max()])
+          ..groupBy([trackingHistories.trackingNumber, trackingHistories.carrier]))
+        .map((row) => row.read(trackingHistories.id.max()))
+        .get();
+
+    final maxIds = <int>[];
+    for (final id in maxIdRows) {
+      if (id != null) maxIds.add(id);
+    }
+    if (maxIds.isEmpty) return {};
+
+    final histories = await (select(trackingHistories)
+          ..where((t) => t.id.isIn(maxIds)))
+        .get();
+
+    final result = <String, TrackingHistory>{};
+    for (final h in histories) {
+      final key = '${h.trackingNumber}_${h.carrier}';
+      result[key] = h;
+    }
+    return result;
+  }
+
+  /// 複数の履歴IDに対するイベントを一括取得
+  Future<Map<int, List<TrackingEventEntry>>> getEventsForHistories(
+      List<int> historyIds) async {
+    if (historyIds.isEmpty) return {};
+
+    final events = await (select(trackingEventEntries)
+          ..where((t) => t.historyId.isIn(historyIds))
+          ..orderBy([(t) => OrderingTerm.asc(t.id)]))
+        .get();
+
+    final result = <int, List<TrackingEventEntry>>{};
+    for (final e in events) {
+      result.putIfAbsent(e.historyId, () => []).add(e);
+    }
+    return result;
+  }
+
   Future<int> saveHistory(String trackingNumber, String carrier,
       {String? itemType,
       required String currentStatus,

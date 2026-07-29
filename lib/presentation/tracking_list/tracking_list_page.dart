@@ -50,6 +50,8 @@ class TrackingListPage extends ConsumerWidget {
           return RefreshIndicator(
             onRefresh: () async {
               ref.invalidate(trackingListProvider);
+              // Providerが完了するまでスピナーを表示し続ける
+              await ref.read(trackingListProvider.future);
             },
             child: ListView.builder(
               padding:
@@ -65,12 +67,18 @@ class TrackingListPage extends ConsumerWidget {
                     direction: DismissDirection.endToStart,
                     confirmDismiss: (_) => confirmDismiss(info),
                     onDismissed: (_) async {
-                      final deleteFn = ref.read(deleteTrackingProvider);
-                      await deleteFn(
-                        trackingNumber: info.trackingNumber,
-                        carrier: info.carrier.name,
-                      );
-                      ref.invalidate(trackingListProvider);
+                      try {
+                        final deleteFn = ref.read(deleteTrackingProvider);
+                        await deleteFn(
+                          trackingNumber: info.trackingNumber,
+                          carrier: info.carrier.name,
+                        );
+                      } catch (e) {
+                        // 削除に失敗した場合、リストを再描画して復元
+                        debugPrint('Failed to delete tracking: $e');
+                      } finally {
+                        ref.invalidate(trackingListProvider);
+                      }
                     },
                     background: Container(
                       alignment: Alignment.centerRight,

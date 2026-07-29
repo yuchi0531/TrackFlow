@@ -26,7 +26,6 @@ enum TrackerErrorType {
   networkFailure,
   notFound,
   parseFailure,
-  invalidTrackingNumber,
 }
 
 /// トラッカー共通インターフェース

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trackflow/domain/entities/carrier.dart';
 import 'package:trackflow/domain/entities/tracking_event.dart' as domain;
@@ -12,36 +13,41 @@ final trackingListProvider = FutureProvider<List<TrackingInfo>>((ref) async {
 
     if (saved.isEmpty) return [];
 
+    // バッチ取得: 1回のクエリで全履歴を取得
+    final histories = await db.getAllLatestHistories();
+    final historyIds = histories.values.map((h) => h.id).toList();
+    final eventsByHistory =
+        await db.getEventsForHistories(historyIds);
+
     final results = <TrackingInfo>[];
     for (final item in saved) {
-      try {
-        final history = await db.getLatestHistory(
-            item.trackingNumber, item.carrier);
-        if (history != null) {
-          final events = await db.getEventsForHistory(history.id);
-          final carrierEnum = Carrier.fromString(item.carrier);
+      final key = '${item.trackingNumber}_${item.carrier}';
+      final history = histories[key];
+      if (history != null) {
+        final carrierEnum = Carrier.fromString(item.carrier);
+        final events = eventsByHistory[history.id] ?? [];
 
-          results.add(TrackingInfo(
-            trackingNumber: item.trackingNumber,
-            carrier: carrierEnum,
-            itemType: history.itemType,
-            currentStatus: history.currentStatus,
-            estimatedDelivery: history.estimatedDelivery,
-            events: events
-                .map((e) => domain.TrackingEvent(
-                      rawDate: e.rawDate,
-                      date: null,
-                      status: e.status,
-                      location: e.location,
-                    ))
-                .toList(),
-            lastUpdated: history.fetchedAt,
-          ));
-        }
-      } catch (_) {}
+        results.add(TrackingInfo(
+          trackingNumber: item.trackingNumber,
+          carrier: carrierEnum,
+          itemType: history.itemType,
+          currentStatus: history.currentStatus,
+          estimatedDelivery: history.estimatedDelivery,
+          events: events
+              .map((e) => domain.TrackingEvent(
+                    rawDate: e.rawDate,
+                    date: null,
+                    status: e.status,
+                    location: e.location,
+                  ))
+              .toList(),
+          lastUpdated: history.fetchedAt,
+        ));
+      }
     }
     return results;
-  } catch (_) {
+  } catch (e) {
+    debugPrint('Failed to load tracking list: $e');
     return [];
   }
 });
@@ -82,7 +88,9 @@ final addTrackingProvider = Provider<Future<void> Function({
         trackingNumber: trackingNumber,
         carrier: carrier,
       );
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Initial fetch failed for $trackingNumber: $e');
+    }
   };
 });
 

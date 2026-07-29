@@ -16,24 +16,33 @@ class YamatoTracker implements CarrierTracker {
   Future<TrackingInfo> fetch(String trackingNumber) async {
     final uri = Uri.parse(CarrierUrls.yamatoTrackingUrl);
 
-    final response = await http.post(
-      uri,
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': CarrierUrls.userAgent,
-      },
-      body: 'number00=1&number01=$trackingNumber',
-    );
+    try {
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': CarrierUrls.userAgent,
+        },
+        body: 'number00=1&number01=$trackingNumber',
+      ).timeout(const Duration(seconds: 15));
 
-    if (response.statusCode != 200) {
+      if (response.statusCode != 200) {
+        throw TrackerException(
+          type: TrackerErrorType.networkFailure,
+          message: 'HTTP ${response.statusCode}',
+          statusCode: response.statusCode,
+        );
+      }
+
+      return parse(response.body, trackingNumber);
+    } on TrackerException {
+      rethrow;
+    } on Exception catch (e) {
       throw TrackerException(
         type: TrackerErrorType.networkFailure,
-        message: 'HTTP ${response.statusCode}',
-        statusCode: response.statusCode,
+        message: 'サーバーに接続できません: $e',
       );
     }
-
-    return parse(response.body, trackingNumber);
   }
 
   @override
@@ -158,7 +167,8 @@ class YamatoTracker implements CarrierTracker {
 
   DateTime? _parseDate(String raw) {
     try {
-      final year = DateTime.now().year;
+      final now = DateTime.now();
+      final year = now.year;
       final parts = '$year/$raw'.split(RegExp(r'[/ :]'));
       if (parts.length >= 3) {
         final y = int.parse(parts[0]);
@@ -167,9 +177,12 @@ class YamatoTracker implements CarrierTracker {
         if (parts.length >= 5) {
           final hour = int.parse(parts[3]);
           final minute = int.parse(parts[4]);
-          return DateTime(y, month, day, hour, minute);
+          final dt = DateTime(y, month, day, hour, minute);
+          // 未来の日付がパースされた場合、年を1つ戻す（年跨ぎ対応）
+          return dt.isAfter(now) ? DateTime(y - 1, month, day, hour, minute) : dt;
         }
-        return DateTime(y, month, day);
+        final dt = DateTime(y, month, day);
+        return dt.isAfter(now) ? DateTime(y - 1, month, day) : dt;
       }
     } catch (_) {}
     return null;

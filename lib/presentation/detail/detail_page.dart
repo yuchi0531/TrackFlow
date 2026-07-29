@@ -15,6 +15,20 @@ class DetailPage extends ConsumerWidget {
     this.carrier = 'japanPost',
   });
 
+  /// 例外メッセージをユーザーフレンドリーな表現に変換
+  static String _friendlyErrorMessage(String raw) {
+    if (raw.contains('SocketException') || raw.contains('TimeoutException')) {
+      return 'ネットワークに接続できません。電波状況を確認してください。';
+    }
+    if (raw.contains('notFound') || raw.contains('見つかりません')) {
+      return '指定された追跡番号の情報が見つかりませんでした。';
+    }
+    if (raw.contains('parseFailure')) {
+      return '追跡ページの解析に失敗しました。時間をおいて再試行してください。';
+    }
+    return 'エラーが発生しました。再試行してください。';
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final trackingAsync = ref.watch(trackingDetailProvider(
@@ -55,7 +69,7 @@ class DetailPage extends ConsumerWidget {
               Text('追跡情報の取得に失敗しました',
                   style: Theme.of(context).textTheme.bodyLarge),
               const SizedBox(height: 4),
-              Text(error.toString(),
+              Text(_friendlyErrorMessage(error.toString()),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       )),

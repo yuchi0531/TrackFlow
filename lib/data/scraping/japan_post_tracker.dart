@@ -22,20 +22,29 @@ class JapanPostTracker implements CarrierTracker {
       },
     );
 
-    final response = await http.get(
-      uri,
-      headers: {'User-Agent': CarrierUrls.userAgent},
-    );
+    try {
+      final response = await http.get(
+        uri,
+        headers: {'User-Agent': CarrierUrls.userAgent},
+      ).timeout(const Duration(seconds: 15));
 
-    if (response.statusCode != 200) {
+      if (response.statusCode != 200) {
+        throw TrackerException(
+          type: TrackerErrorType.networkFailure,
+          message: 'HTTP ${response.statusCode}',
+          statusCode: response.statusCode,
+        );
+      }
+
+      return parse(response.body, trackingNumber);
+    } on TrackerException {
+      rethrow;
+    } on Exception catch (e) {
       throw TrackerException(
         type: TrackerErrorType.networkFailure,
-        message: 'HTTP ${response.statusCode}',
-        statusCode: response.statusCode,
+        message: 'サーバーに接続できません: $e',
       );
     }
-
-    return parse(response.body, trackingNumber);
   }
 
   @override

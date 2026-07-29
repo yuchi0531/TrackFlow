@@ -16,24 +16,33 @@ class SagawaTracker implements CarrierTracker {
   Future<TrackingInfo> fetch(String trackingNumber) async {
     final uri = Uri.parse(CarrierUrls.sagawaTrackingUrl);
 
-    final response = await http.post(
-      uri,
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': CarrierUrls.userAgent,
-      },
-      body: 'okurijoNo=$trackingNumber',
-    );
+    try {
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': CarrierUrls.userAgent,
+        },
+        body: 'okurijoNo=$trackingNumber',
+      ).timeout(const Duration(seconds: 15));
 
-    if (response.statusCode != 200) {
+      if (response.statusCode != 200) {
+        throw TrackerException(
+          type: TrackerErrorType.networkFailure,
+          message: 'HTTP ${response.statusCode}',
+          statusCode: response.statusCode,
+        );
+      }
+
+      return parse(response.body, trackingNumber);
+    } on TrackerException {
+      rethrow;
+    } on Exception catch (e) {
       throw TrackerException(
         type: TrackerErrorType.networkFailure,
-        message: 'HTTP ${response.statusCode}',
-        statusCode: response.statusCode,
+        message: 'サーバーに接続できません: $e',
       );
     }
-
-    return parse(response.body, trackingNumber);
   }
 
   @override
@@ -97,7 +106,7 @@ class SagawaTracker implements CarrierTracker {
     if (events.isEmpty) {
       throw TrackerException(
         type: TrackerErrorType.notFound,
-        message: 'お問い合わせ番号が見つかりません',
+        message: '佐川急便: お問い合せ送り状Noが見つかりません',
       );
     }
 
@@ -130,7 +139,8 @@ class SagawaTracker implements CarrierTracker {
 
   DateTime? _parseDate(String raw) {
     try {
-      final year = DateTime.now().year;
+      final now = DateTime.now();
+      final year = now.year;
       final parts = '$year/$raw'.split(RegExp(r'[/ :]'));
       if (parts.length >= 5) {
         final y = int.parse(parts[0]);
@@ -138,7 +148,9 @@ class SagawaTracker implements CarrierTracker {
         final day = int.parse(parts[2]);
         final hour = int.parse(parts[3]);
         final minute = int.parse(parts[4]);
-        return DateTime(y, month, day, hour, minute);
+        final dt = DateTime(y, month, day, hour, minute);
+        // 未来の日付がパースされた場合、年を1つ戻す（年跨ぎ対応）
+        return dt.isAfter(now) ? DateTime(y - 1, month, day, hour, minute) : dt;
       }
     } catch (_) {}
     return null;

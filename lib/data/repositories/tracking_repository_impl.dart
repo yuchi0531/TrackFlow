@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:trackflow/data/scraping/carrier_tracker.dart';
 import 'package:trackflow/data/local/database.dart';
 import 'package:trackflow/domain/entities/carrier.dart';
@@ -44,31 +45,53 @@ class TrackingRepositoryImpl implements TrackingRepository {
 
       return info;
     } on TrackerException {
-      // キャッシュから取得を試みる
-      final cached =
-          await _database.getLatestHistory(trackingNumber, carrier);
-      if (cached != null) {
-        final eventsData =
-            await _database.getEventsForHistory(cached.id);
-        return TrackingInfo(
-          trackingNumber: trackingNumber,
-          carrier: carrierEnum,
-          itemType: cached.itemType,
-          currentStatus: cached.currentStatus,
-          estimatedDelivery: cached.estimatedDelivery,
-          events: eventsData
-              .map((e) => domain.TrackingEvent(
-                    rawDate: e.rawDate,
-                    date: null,
-                    status: e.status,
-                    location: e.location,
-                  ))
-              .toList(),
-          lastUpdated: cached.fetchedAt,
-        );
-      }
-      rethrow;
+      return _getCachedOrThrow(trackingNumber, carrier, carrierEnum);
+    } on TimeoutException {
+      return _getCachedOrThrow(trackingNumber, carrier, carrierEnum);
+    } on Exception {
+      final trackerExc = TrackerException(
+        type: TrackerErrorType.networkFailure,
+        message: '予期しないエラーが発生しました',
+      );
+      return _getCached(trackingNumber, carrier, carrierEnum, () => throw trackerExc);
     }
+  }
+
+  Future<TrackingInfo> _getCached(
+      String trackingNumber, String carrier, Carrier carrierEnum,
+      void Function() onMiss) async {
+    final cached = await _database.getLatestHistory(trackingNumber, carrier);
+    if (cached != null) {
+      final eventsData = await _database.getEventsForHistory(cached.id);
+      return TrackingInfo(
+        trackingNumber: trackingNumber,
+        carrier: carrierEnum,
+        itemType: cached.itemType,
+        currentStatus: cached.currentStatus,
+        estimatedDelivery: cached.estimatedDelivery,
+        events: eventsData
+            .map((e) => domain.TrackingEvent(
+                  rawDate: e.rawDate,
+                  date: null,
+                  status: e.status,
+                  location: e.location,
+                ))
+            .toList(),
+        lastUpdated: cached.fetchedAt,
+      );
+    }
+    onMiss();
+    throw UnsupportedError('onMiss must throw'); // この行には到達しない（onMissが必ずthrowする）
+  }
+
+  Future<TrackingInfo> _getCachedOrThrow(
+      String trackingNumber, String carrier, Carrier carrierEnum) {
+    return _getCached(trackingNumber, carrier, carrierEnum, () {
+      throw TrackerException(
+        type: TrackerErrorType.notFound,
+        message: '追跡情報が取得できません',
+      );
+    });
   }
 
   @override
@@ -79,7 +102,14 @@ class TrackingRepositoryImpl implements TrackingRepository {
     return cleaned.length >= 10 && cleaned.length <= 14;
   }
 
-  /// Carrierの文字列から自動判別を試みる
+  /// 追跡番号の桁数からキャリアを自動判別する。
+  ///
+  /// - 11桁または13桁: 日本郵便
+  /// - 12桁: ヤマト運輸（佐川急便も12桁のため判別不可、手動選択が必要）
+  ///
+  /// 佐川急便の追跡番号はヤマト運輸と同じ12桁のケースが多く、
+  /// 桁数のみでは両者を確実に区別できないため、12桁の場合はヤマト運輸を優先する。
+  /// それ以外の桁数（10桁や14桁など）の場合は null を返す。
   static Carrier? detectCarrier(String trackingNumber) {
     final cleaned = trackingNumber.replaceAll('-', '');
 

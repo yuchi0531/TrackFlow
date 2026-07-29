@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:trackflow/provider/settings_provider.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -9,12 +10,15 @@ class SettingsPage extends ConsumerStatefulWidget {
 }
 
 class _SettingsPageState extends ConsumerState<SettingsPage> {
-  bool _notifyDelivery = true;
-  bool _notifyStatusChange = false;
-  String _updateInterval = '30分';
-
   @override
   Widget build(BuildContext context) {
+    final notifyDelivery = ref.watch(notifyDeliveryProvider);
+    final notifyStatusChange = ref.watch(notifyStatusChangeProvider);
+    final updateInterval = ref.watch(updateIntervalProvider);
+    final setNotifyDelivery = ref.read(setNotifyDeliveryProvider);
+    final setNotifyStatusChange = ref.read(setNotifyStatusChangeProvider);
+    final setUpdateInterval = ref.read(setUpdateIntervalProvider);
+
     return Scaffold(
       appBar: AppBar(title: const Text('設定')),
       body: ListView(
@@ -23,9 +27,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ListTile(
             leading: const Icon(Icons.update),
             title: const Text('自動更新間隔'),
-            subtitle: Text(_updateInterval),
+            subtitle: Text(updateInterval),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => _showIntervalPicker(context),
+            onTap: () => _showIntervalPicker(context, updateInterval, setUpdateInterval),
           ),
           const Divider(indent: 72),
           _buildSectionHeader(context, '通知'),
@@ -33,15 +37,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             secondary: const Icon(Icons.notifications_outlined),
             title: const Text('配達完了を通知'),
             subtitle: const Text('配達が完了したらプッシュ通知でお知らせします'),
-            value: _notifyDelivery,
-            onChanged: (value) => setState(() => _notifyDelivery = value),
+            value: notifyDelivery,
+            onChanged: setNotifyDelivery,
           ),
           SwitchListTile(
             secondary: const Icon(Icons.notification_important_outlined),
             title: const Text('ステータス変更を通知'),
             subtitle: const Text('配送状況に変化があったら通知します'),
-            value: _notifyStatusChange,
-            onChanged: (value) => setState(() => _notifyStatusChange = value),
+            value: notifyStatusChange,
+            onChanged: setNotifyStatusChange,
           ),
           const Divider(indent: 72),
           _buildSectionHeader(context, '情報'),
@@ -87,7 +91,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     );
   }
 
-  void _showIntervalPicker(BuildContext context) {
+  void _showIntervalPicker(BuildContext context, String current,
+      void Function(String) onChanged) {
     final intervals = ['15分', '30分', '1時間', '3時間'];
     showModalBottomSheet(
       context: context,
@@ -108,11 +113,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               ...intervals.map((interval) {
                 return ListTile(
                   title: Text(interval),
-                  trailing: interval == _updateInterval
+                  trailing: interval == current
                       ? const Icon(Icons.check, color: Colors.blue)
                       : null,
                   onTap: () {
-                    setState(() => _updateInterval = interval);
+                    onChanged(interval);
                     Navigator.pop(ctx);
                   },
                 );
