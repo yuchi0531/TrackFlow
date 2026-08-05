@@ -36,6 +36,17 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
     final number = _numberController.text.trim();
     if (number.isEmpty || _isSubmitting) return;
 
+    // 追跡番号の形式チェック（10〜14桁の数字、ハイフン可）
+    if (!TrackingRepositoryImpl.isValidTrackingNumberStatic(number)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('追跡番号の形式が正しくありません（10〜14桁）')),
+        );
+      }
+      return;
+    }
+
     final carrier = _selectedCarrier ??
         TrackingRepositoryImpl.detectCarrier(number)?.name ??
         'yamato';
@@ -62,8 +73,10 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
       }
     } catch (e) {
       if (mounted) {
+        // ユーザーフレンドリーなエラーメッセージを表示
+        final message = _friendlyErrorMessage(e);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString())),
+          SnackBar(content: Text(message)),
         );
       }
     } finally {
@@ -71,6 +84,26 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
         setState(() => _isSubmitting = false);
       }
     }
+  }
+
+  /// 例外をユーザー向けのメッセージに変換
+  static String _friendlyErrorMessage(Object e) {
+    final msg = e.toString();
+    if (msg.contains('既に登録されています')) {
+      return 'この追跡番号は既に登録されています';
+    }
+    if (msg.contains('見つかりません')) {
+      return '指定された追跡番号の情報が見つかりませんでした';
+    }
+    if (msg.contains('SocketException') ||
+        msg.contains('TimeoutException') ||
+        msg.contains('networkFailure')) {
+      return 'サーバーに接続できませんでした。時間をおいて再試行してください';
+    }
+    if (msg.contains('parseFailure')) {
+      return '追跡ページの解析に失敗しました。時間をおいて再試行してください';
+    }
+    return 'エラーが発生しました。もう一度お試しください';
   }
 
   @override

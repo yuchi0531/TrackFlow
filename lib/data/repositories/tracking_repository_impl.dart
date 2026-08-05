@@ -95,7 +95,10 @@ class TrackingRepositoryImpl implements TrackingRepository {
   }
 
   @override
-  bool isValidTrackingNumber(String number) {
+  bool isValidTrackingNumber(String number) => isValidTrackingNumberStatic(number);
+
+  /// 追跡番号の形式を検証する（インスタンス不要の静的ヘルパー）
+  static bool isValidTrackingNumberStatic(String number) {
     if (number.isEmpty) return false;
     final cleaned = number.replaceAll('-', '');
     if (!RegExp(r'^\d+$').hasMatch(cleaned)) return false;

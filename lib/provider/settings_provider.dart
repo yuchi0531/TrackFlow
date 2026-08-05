@@ -11,58 +11,88 @@ class SettingsKeys {
   SettingsKeys._();
 }
 
-/// 設定操作用のProvider
-final settingsProvider = FutureProvider<SharedPreferences>((ref) {
-  return SharedPreferences.getInstance();
-});
+/// SharedPreferences の読み書きを一元管理するNotifier。
+///
+/// `state` を更新（setBool / setString 後に再代入）することで、
+/// このproviderをwatchしている各設定providerが再ビルドされ、
+/// 保存済みの値が確実にUIへ反映される。
+class SettingsController extends AsyncNotifier<SharedPreferences> {
+  @override
+  Future<SharedPreferences> build() => SharedPreferences.getInstance();
 
-/// 配達完了通知のトグル状態
-final notifyDeliveryProvider = StateProvider<bool>((ref) {
-  final prefs = ref.watch(settingsProvider).valueOrNull;
+  /// SharedPreferences インスタンスを取得（解決済みなら即、未解決なら待機）
+  Future<SharedPreferences> _getPrefs() async {
+    final current = state;
+    if (current.hasValue && current.value != null) {
+      return current.value!;
+    }
+    return await future;
+  }
+
+  /// 配達完了通知トグルを更新して保存
+  Future<void> setNotifyDelivery(bool value) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(SettingsKeys.notifyDelivery, value);
+    // stateを再代入してwatch側へ通知
+    state = AsyncValue.data(prefs);
+  }
+
+  /// ステータス変更通知トグルを更新して保存
+  Future<void> setNotifyStatusChange(bool value) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(SettingsKeys.notifyStatusChange, value);
+    state = AsyncValue.data(prefs);
+  }
+
+  /// 更新間隔を更新して保存
+  Future<void> setUpdateInterval(String value) async {
+    final prefs = await _getPrefs();
+    await prefs.setString(SettingsKeys.updateInterval, value);
+    state = AsyncValue.data(prefs);
+    // バックグラウンドタスクの間隔も即時反映
+    await updateBackgroundTaskInterval(value);
+  }
+}
+
+final settingsControllerProvider =
+    AsyncNotifierProvider<SettingsController, SharedPreferences>(
+        SettingsController.new);
+
+/// 配達完了通知トグルの状態
+/// prefs未解決時はデフォルト値（true）を返し、解決後に実際の値へ更新される。
+final notifyDeliveryProvider = Provider<bool>((ref) {
+  final prefs = ref.watch(settingsControllerProvider).valueOrNull;
   return prefs?.getBool(SettingsKeys.notifyDelivery) ?? true;
 });
 
-/// ステータス変更通知のトグル状態
-final notifyStatusChangeProvider = StateProvider<bool>((ref) {
-  final prefs = ref.watch(settingsProvider).valueOrNull;
+/// ステータス変更通知トグルの状態
+final notifyStatusChangeProvider = Provider<bool>((ref) {
+  final prefs = ref.watch(settingsControllerProvider).valueOrNull;
   return prefs?.getBool(SettingsKeys.notifyStatusChange) ?? false;
 });
 
 /// 更新間隔
-/// 利用可能な値: '15分', '30分', '1時間', '3時間'
-final updateIntervalProvider = StateProvider<String>((ref) {
-  final prefs = ref.watch(settingsProvider).valueOrNull;
+final updateIntervalProvider = Provider<String>((ref) {
+  final prefs = ref.watch(settingsControllerProvider).valueOrNull;
   return prefs?.getString(SettingsKeys.updateInterval) ?? '30分';
 });
 
-/// 配達完了通知トグルを更新して保存
-final setNotifyDeliveryProvider =
-    Provider<void Function(bool)>((ref) {
-  return (bool value) async {
-    final prefs = await ref.read(settingsProvider.future);
-    await prefs.setBool(SettingsKeys.notifyDelivery, value);
-    ref.read(notifyDeliveryProvider.notifier).state = value;
-  };
+/// 配達完了通知トグルを更新する関数
+final setNotifyDeliveryProvider = Provider<Future<void> Function(bool)>((ref) {
+  final controller = ref.read(settingsControllerProvider.notifier);
+  return controller.setNotifyDelivery;
 });
 
-/// ステータス変更通知トグルを更新して保存
+/// ステータス変更通知トグルを更新する関数
 final setNotifyStatusChangeProvider =
-    Provider<void Function(bool)>((ref) {
-  return (bool value) async {
-    final prefs = await ref.read(settingsProvider.future);
-    await prefs.setBool(SettingsKeys.notifyStatusChange, value);
-    ref.read(notifyStatusChangeProvider.notifier).state = value;
-  };
+    Provider<Future<void> Function(bool)>((ref) {
+  final controller = ref.read(settingsControllerProvider.notifier);
+  return controller.setNotifyStatusChange;
 });
 
-/// 更新間隔を更新して保存
+/// 更新間隔を更新する関数
 final setUpdateIntervalProvider =
-    Provider<void Function(String)>((ref) {
-  return (String value) async {
-    final prefs = await ref.read(settingsProvider.future);
-    await prefs.setString(SettingsKeys.updateInterval, value);
-    ref.read(updateIntervalProvider.notifier).state = value;
-    // バックグラウンドタスクの間隔も即時反映
-    await updateBackgroundTaskInterval(value);
-  };
+    Provider<Future<void> Function(String)>((ref) {
+  final controller = ref.read(settingsControllerProvider.notifier);
+  return controller.setUpdateInterval;
 });

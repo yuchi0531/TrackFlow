@@ -49,9 +49,9 @@ class TrackingListPage extends ConsumerWidget {
           }
           return RefreshIndicator(
             onRefresh: () async {
-              ref.invalidate(trackingListProvider);
-              // Providerが完了するまでスピナーを表示し続ける
-              await ref.read(trackingListProvider.future);
+              // ref.refreshで確実に新しいFutureを取得して待機する
+              // ignore: unused_result
+              await ref.refresh(trackingListProvider.future);
             },
             child: ListView.builder(
               padding:

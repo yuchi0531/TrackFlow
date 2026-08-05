@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:trackflow/provider/background_provider.dart';
 import 'package:trackflow/provider/settings_provider.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
@@ -38,14 +39,42 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             title: const Text('配達完了を通知'),
             subtitle: const Text('配達が完了したらプッシュ通知でお知らせします'),
             value: notifyDelivery,
-            onChanged: setNotifyDelivery,
+            onChanged: (value) async {
+              if (value) {
+                // Android 13+ では通知権限が必須のため、有効化時にリクエスト
+                final granted = await requestNotificationPermissions();
+                if (!mounted) return;
+                if (!granted) {
+                  _showPermissionRequiredDialog(
+                    this.context,
+                    onGrantedAfter: setNotifyDelivery,
+                  );
+                  return;
+                }
+              }
+              await setNotifyDelivery(value);
+            },
           ),
           SwitchListTile(
             secondary: const Icon(Icons.notification_important_outlined),
             title: const Text('ステータス変更を通知'),
             subtitle: const Text('配送状況に変化があったら通知します'),
             value: notifyStatusChange,
-            onChanged: setNotifyStatusChange,
+            onChanged: (value) async {
+              if (value) {
+                // Android 13+ では通知権限が必須のため、有効化時にリクエスト
+                final granted = await requestNotificationPermissions();
+                if (!mounted) return;
+                if (!granted) {
+                  _showPermissionRequiredDialog(
+                    this.context,
+                    onGrantedAfter: setNotifyStatusChange,
+                  );
+                  return;
+                }
+              }
+              await setNotifyStatusChange(value);
+            },
           ),
           const Divider(indent: 72),
           _buildSectionHeader(context, '情報'),
@@ -87,6 +116,38 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               color: Theme.of(context).colorScheme.primary,
               fontWeight: FontWeight.bold,
             ),
+      ),
+    );
+  }
+
+  void _showPermissionRequiredDialog(BuildContext context,
+      {Future<void> Function(bool)? onGrantedAfter}) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('通知の許可が必要です'),
+        content: const Text(
+          '通知を受け取るには、システム設定からアプリの通知を許可してください。\n\n'
+          '設定 → アプリ → TrackFlow → 通知 → 通知を許可',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              // システムの通知設定画面を開いて権限を手動で付与してもらう
+              final opened = await openNotificationSettings();
+              if (opened && onGrantedAfter != null) {
+                // 設定画面から戻ったらトグルをONにする（権限が付与されている前提）
+                await onGrantedAfter(true);
+              }
+            },
+            child: const Text('設定を開く'),
+          ),
+        ],
       ),
     );
   }

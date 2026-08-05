@@ -20,6 +20,9 @@ class DetailPage extends ConsumerWidget {
     if (raw.contains('SocketException') || raw.contains('TimeoutException')) {
       return 'ネットワークに接続できません。電波状況を確認してください。';
     }
+    if (raw.contains('networkFailure')) {
+      return 'サーバーに接続できませんでした。時間をおいて再試行してください。';
+    }
     if (raw.contains('notFound') || raw.contains('見つかりません')) {
       return '指定された追跡番号の情報が見つかりませんでした。';
     }

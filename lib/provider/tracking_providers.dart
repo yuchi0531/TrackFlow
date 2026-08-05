@@ -80,17 +80,16 @@ final addTrackingProvider = Provider<Future<void> Function({
       throw Exception('この追跡番号は既に登録されています');
     }
 
-    await db.insertTracking(trackingNumber, carrier, nickname: nickname);
+    // 先に追跡情報を取得して成功した場合のみ登録する。
+    // これにより、初期状態から履歴が表示され、
+    // 取得失敗時に「登録されたが履歴が空」という中途半端な状態を防ぐ。
+    final repo = await ref.read(trackingRepositoryProvider.future);
+    await repo.fetchTracking(
+      trackingNumber: trackingNumber,
+      carrier: carrier,
+    );
 
-    try {
-      final repo = await ref.read(trackingRepositoryProvider.future);
-      await repo.fetchTracking(
-        trackingNumber: trackingNumber,
-        carrier: carrier,
-      );
-    } catch (e) {
-      debugPrint('Initial fetch failed for $trackingNumber: $e');
-    }
+    await db.insertTracking(trackingNumber, carrier, nickname: nickname);
   };
 });
 

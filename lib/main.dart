@@ -14,6 +14,14 @@ void main() async {
     debugPrint('Failed to initialize background service: $e');
   }
 
+  // 通知チャンネルを事前作成（権限リクエストと独立）
+  // 権限は設定画面のトグルでリクエストする
+  try {
+    await initNotificationChannels();
+  } catch (e) {
+    debugPrint('Failed to initialize notification channels: $e');
+  }
+
   runApp(
     const ProviderScope(
       child: TrackFlowApp(),

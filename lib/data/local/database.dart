@@ -140,10 +140,33 @@ class AppDatabase extends _$AppDatabase {
     return result;
   }
 
+  /// 追跡履歴を保存する。
+  ///
+  /// 最新の履歴とステータスが同じ場合は新規レコードを作成せず、
+  /// 既存レコードの `fetchedAt` と付随情報を更新する。
+  /// ステータスが変化した場合のみ新規レコードを挿入する。
+  ///
+  /// これにより `TrackingHistories` テーブルの肥大化を防ぎつつ、
+  /// ステータス変更時は履歴として残るため通知判定（前回と比較）にも使える。
   Future<int> saveHistory(String trackingNumber, String carrier,
       {String? itemType,
       required String currentStatus,
-      String? estimatedDelivery}) {
+      String? estimatedDelivery}) async {
+    final latest = await getLatestHistory(trackingNumber, carrier);
+    if (latest != null && latest.currentStatus == currentStatus) {
+      // ステータスが変わっていない場合は既存レコードを更新
+      await (update(trackingHistories)
+            ..where((t) => t.id.equals(latest.id)))
+          .write(
+        TrackingHistoriesCompanion(
+          itemType: Value(itemType),
+          estimatedDelivery: Value(estimatedDelivery),
+          fetchedAt: Value(DateTime.now()),
+        ),
+      );
+      return latest.id;
+    }
+
     return into(trackingHistories).insert(
       TrackingHistoriesCompanion(
         trackingNumber: Value(trackingNumber),
@@ -162,11 +185,23 @@ class AppDatabase extends _$AppDatabase {
         .get();
   }
 
+  /// 履歴にイベントを保存する。
+  ///
+  /// 同一の `historyId` に対する既存イベントを一旦削除してから
+  /// 新しいイベントを挿入する。これにより、
+  /// ステータスが変わらず `saveHistory` が既存レコードを更新した場合でも
+  /// イベントが重複しない。
   Future<void> saveEvents(
       int historyId,
       List<({String rawDate, String status, String? location})>
           events) async {
+    if (events.isEmpty) return;
+
     await batch((batch) {
+      batch.deleteWhere(
+        trackingEventEntries,
+        (t) => t.historyId.equals(historyId),
+      );
       batch.insertAll(
         trackingEventEntries,
         events.map((e) => TrackingEventEntriesCompanion(
