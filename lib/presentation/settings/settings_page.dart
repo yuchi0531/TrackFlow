@@ -81,12 +81,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('TrackFlowについて'),
-            subtitle: const Text('バージョン 0.0.4'),
+            subtitle: const Text('バージョン 0.0.5'),
             onTap: () {
               showAboutDialog(
                 context: context,
                 applicationName: 'TrackFlow',
-                applicationVersion: '0.0.4',
+                applicationVersion: '0.0.5',
                 applicationLegalese: '© 2026 TrackFlow',
                 children: [
                   const Text(
