@@ -67,18 +67,12 @@ class TrackingListPage extends ConsumerWidget {
                     direction: DismissDirection.endToStart,
                     confirmDismiss: (_) => confirmDismiss(info),
                     onDismissed: (_) async {
-                      try {
-                        final deleteFn = ref.read(deleteTrackingProvider);
-                        await deleteFn(
-                          trackingNumber: info.trackingNumber,
-                          carrier: info.carrier.name,
-                        );
-                      } catch (e) {
-                        // 削除に失敗した場合、リストを再描画して復元
-                        debugPrint('Failed to delete tracking: $e');
-                      } finally {
-                        ref.invalidate(trackingListProvider);
-                      }
+                      // NotifierのdeleteでDB削除前に state から即時除去するため、
+                      // 削除済みアイテムが一瞬戻る（Dismissibleアサーション）のを防ぐ。
+                      await ref.read(trackingListProvider.notifier).delete(
+                            trackingNumber: info.trackingNumber,
+                            carrier: info.carrier.name,
+                          );
                     },
                     background: Container(
                       alignment: Alignment.centerRight,

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:trackflow/data/repositories/tracking_repository_impl.dart';
+import 'package:trackflow/domain/tracking_number.dart';
 import 'package:trackflow/presentation/add_tracking/widgets/carrier_selector.dart';
 import 'package:trackflow/provider/tracking_providers.dart';
 
@@ -37,7 +37,7 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
     if (number.isEmpty || _isSubmitting) return;
 
     // 追跡番号の形式チェック（10〜14桁の数字、ハイフン可）
-    if (!TrackingRepositoryImpl.isValidTrackingNumberStatic(number)) {
+    if (!TrackingNumberValidator.isValid(number)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -47,9 +47,19 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
       return;
     }
 
-    final carrier = _selectedCarrier ??
-        TrackingRepositoryImpl.detectCarrier(number)?.name ??
-        'yamato';
+    // キャリアが手動選択されていない場合は自動判別する。
+    // 自動判別できない（10桁や14桁など）場合は黙ってヤマトに既定化せず、
+    // 手動選択を促す。
+    String? carrier = _selectedCarrier;
+    carrier ??= TrackingNumberValidator.detectCarrier(number)?.name;
+    if (carrier == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('配送会社を選択してください')),
+        );
+      }
+      return;
+    }
 
     setState(() => _isSubmitting = true);
 
@@ -92,7 +102,8 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
     if (msg.contains('既に登録されています')) {
       return 'この追跡番号は既に登録されています';
     }
-    if (msg.contains('見つかりません')) {
+    if (msg.contains('見つかりません') ||
+        msg.contains('取得できません')) {
       return '指定された追跡番号の情報が見つかりませんでした';
     }
     if (msg.contains('SocketException') ||

@@ -18,15 +18,25 @@ const _keyNotifyStatusChange = 'notify_status_change';
 FlutterLocalNotificationsPlugin? _notifications;
 
 /// 通知用のユニークIDを生成
-/// 追跡番号のハッシュから安定生成する。
+/// 追跡番号から決定的に安定生成する。
 /// AndroidのNotificationManagerは32ビットint期待のため、ビットマスクして小さく保つ。
 /// 同一の追跡番号には常に同じIDが割り当てられ、通知の上書き更新が可能。
+///
+/// Dart の `String.hashCode` はプロセスをまたぐ同一性が保証されないため、
+/// workmanager の定期タスク（別プロセスで起動）でも同一結果が得られるよう
+/// FNV-1a ハッシュを自前実装している。
 @visibleForTesting
 int notificationIdFor(String number) {
-  // 追跡番号から安定した32ビットintを生成
-  final hash = number.hashCode & 0x7FFFFFFF;
+  // FNV-1a 32bitハッシュ（offset basis 0x811c9dc5, prime 0x01000193）
+  var hash = 0x811c9dc5;
+  for (final codeUnit in number.codeUnits) {
+    hash ^= codeUnit;
+    hash = (hash * 0x01000193) & 0xFFFFFFFF;
+  }
+  // 負値を避けるため上位ビットをマスク（0以上を保証）
+  final masked = hash & 0x7FFFFFFF;
   // 0は無効IDのため1以上を保証
-  return (hash % 2000000000) + 1;
+  return (masked % 2000000000) + 1;
 }
 
 Future<FlutterLocalNotificationsPlugin> _getNotifications() async {

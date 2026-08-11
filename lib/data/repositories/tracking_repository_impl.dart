@@ -5,6 +5,7 @@ import 'package:trackflow/domain/entities/carrier.dart';
 import 'package:trackflow/domain/entities/tracking_event.dart' as domain;
 import 'package:trackflow/domain/entities/tracking_info.dart';
 import 'package:trackflow/domain/repositories/tracking_repository.dart';
+import 'package:trackflow/domain/tracking_number.dart';
 
 /// TrackingRepositoryの実装
 class TrackingRepositoryImpl implements TrackingRepository {
@@ -98,30 +99,12 @@ class TrackingRepositoryImpl implements TrackingRepository {
   bool isValidTrackingNumber(String number) => isValidTrackingNumberStatic(number);
 
   /// 追跡番号の形式を検証する（インスタンス不要の静的ヘルパー）
-  static bool isValidTrackingNumberStatic(String number) {
-    if (number.isEmpty) return false;
-    final cleaned = number.replaceAll('-', '');
-    if (!RegExp(r'^\d+$').hasMatch(cleaned)) return false;
-    return cleaned.length >= 10 && cleaned.length <= 14;
-  }
+  static bool isValidTrackingNumberStatic(String number) =>
+      TrackingNumberValidator.isValid(number);
 
   /// 追跡番号の桁数からキャリアを自動判別する。
   ///
-  /// - 11桁または13桁: 日本郵便
-  /// - 12桁: ヤマト運輸（佐川急便も12桁のため判別不可、手動選択が必要）
-  ///
-  /// 佐川急便の追跡番号はヤマト運輸と同じ12桁のケースが多く、
-  /// 桁数のみでは両者を確実に区別できないため、12桁の場合はヤマト運輸を優先する。
-  /// それ以外の桁数（10桁や14桁など）の場合は null を返す。
-  static Carrier? detectCarrier(String trackingNumber) {
-    final cleaned = trackingNumber.replaceAll('-', '');
-
-    if (cleaned.length == 11 || cleaned.length == 13) {
-      return Carrier.japanPost;
-    }
-    if (cleaned.length == 12) {
-      return Carrier.yamato;
-    }
-    return null;
-  }
+  /// domain 層のユーティリティを参照する薄いラッパー。
+  static Carrier? detectCarrier(String trackingNumber) =>
+      TrackingNumberValidator.detectCarrier(trackingNumber);
 }

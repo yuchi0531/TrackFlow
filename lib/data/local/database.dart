@@ -78,10 +78,13 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  /// 追跡を物理削除する。
+  ///
+  /// ソフトデリート（isActive=false）だと行が蓄積し続け、
+  /// `findByTrackingNumber` がフィルタしないため再登録できなくなる。
+  /// ハードデリートにより行が残らず、削除後の再登録が可能になる。
   Future<int> deleteTracking(int id) {
-    return (update(savedTrackings)..where((t) => t.id.equals(id))).write(
-      SavedTrackingsCompanion(isActive: const Value(false)),
-    );
+    return (delete(savedTrackings)..where((t) => t.id.equals(id))).go();
   }
 
   Future<TrackingHistory?> getLatestHistory(
@@ -195,22 +198,24 @@ class AppDatabase extends _$AppDatabase {
       int historyId,
       List<({String rawDate, String status, String? location})>
           events) async {
-    if (events.isEmpty) return;
-
     await batch((batch) {
+      // 既存イベントは常に削除する（events が空でも削除する。
+      // 空データの結果でも前回のイベントが残らないようにするため）
       batch.deleteWhere(
         trackingEventEntries,
         (t) => t.historyId.equals(historyId),
       );
-      batch.insertAll(
-        trackingEventEntries,
-        events.map((e) => TrackingEventEntriesCompanion(
-              historyId: Value(historyId),
-              rawDate: Value(e.rawDate),
-              status: Value(e.status),
-              location: Value(e.location),
-            )),
-      );
+      if (events.isNotEmpty) {
+        batch.insertAll(
+          trackingEventEntries,
+          events.map((e) => TrackingEventEntriesCompanion(
+                historyId: Value(historyId),
+                rawDate: Value(e.rawDate),
+                status: Value(e.status),
+                location: Value(e.location),
+              )),
+        );
+      }
     });
   }
 }

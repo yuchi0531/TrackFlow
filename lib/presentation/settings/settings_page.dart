@@ -81,12 +81,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('TrackFlowについて'),
-            subtitle: const Text('バージョン 1.0.0'),
+            subtitle: const Text('バージョン 0.0.4'),
             onTap: () {
               showAboutDialog(
                 context: context,
                 applicationName: 'TrackFlow',
-                applicationVersion: '1.0.0',
+                applicationVersion: '0.0.4',
                 applicationLegalese: '© 2026 TrackFlow',
                 children: [
                   const Text(
@@ -140,8 +140,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               Navigator.pop(ctx);
               // システムの通知設定画面を開いて権限を手動で付与してもらう
               final opened = await openNotificationSettings();
-              if (opened && onGrantedAfter != null) {
-                // 設定画面から戻ったらトグルをONにする（権限が付与されている前提）
+              if (!opened || onGrantedAfter == null) return;
+              // 設定画面から戻った後に権限が実際に付与されたか再確認する。
+              // 付与されていない場合（ユーザーが許可しなかった場合）は
+              // トグルをONにしない。
+              final granted = await areNotificationsEnabled();
+              if (granted) {
                 await onGrantedAfter(true);
               }
             },

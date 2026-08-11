@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trackflow/domain/entities/carrier.dart';
 import 'package:trackflow/domain/entities/tracking_event.dart' as domain;
@@ -6,8 +5,17 @@ import 'package:trackflow/domain/entities/tracking_info.dart';
 import 'database_provider.dart';
 import 'tracking_repository_provider.dart';
 
-final trackingListProvider = FutureProvider<List<TrackingInfo>>((ref) async {
-  try {
+final trackingListProvider = AsyncNotifierProvider<TrackingListNotifier,
+    List<TrackingInfo>>(TrackingListNotifier.new);
+
+/// 追跡一覧を管理するNotifier。
+///
+/// `build()` で一覧を取得し、削除時にはDB削除前に state から該当アイテムを
+/// 同期的に除去することで、FutureProvider のような「更新中も古いdataを返す」
+/// フリッカー（Dismissible の「まだツリー内に残っている」アサーション）を回避する。
+class TrackingListNotifier extends AsyncNotifier<List<TrackingInfo>> {
+  @override
+  Future<List<TrackingInfo>> build() async {
     final db = await ref.watch(databaseProvider.future);
     final saved = await db.getAllActive();
 
@@ -16,15 +24,15 @@ final trackingListProvider = FutureProvider<List<TrackingInfo>>((ref) async {
     // バッチ取得: 1回のクエリで全履歴を取得
     final histories = await db.getAllLatestHistories();
     final historyIds = histories.values.map((h) => h.id).toList();
-    final eventsByHistory =
-        await db.getEventsForHistories(historyIds);
+    final eventsByHistory = await db.getEventsForHistories(historyIds);
 
     final results = <TrackingInfo>[];
     for (final item in saved) {
       final key = '${item.trackingNumber}_${item.carrier}';
       final history = histories[key];
+      final carrierEnum = Carrier.fromString(item.carrier);
+
       if (history != null) {
-        final carrierEnum = Carrier.fromString(item.carrier);
         final events = eventsByHistory[history.id] ?? [];
 
         results.add(TrackingInfo(
@@ -43,14 +51,43 @@ final trackingListProvider = FutureProvider<List<TrackingInfo>>((ref) async {
               .toList(),
           lastUpdated: history.fetchedAt,
         ));
+      } else {
+        // 初回fetchが失敗した場合など履歴が存在しない場合は、
+        // 一覧から消えないようプレースホルダーとして表示する。
+        // タップで詳細画面から再取得を試みられる。
+        results.add(TrackingInfo(
+          trackingNumber: item.trackingNumber,
+          carrier: carrierEnum,
+          itemType: null,
+          currentStatus: '情報を取得できませんでした',
+          events: const [],
+        ));
       }
     }
     return results;
-  } catch (e) {
-    debugPrint('Failed to load tracking list: $e');
-    return [];
   }
-});
+
+  /// 追跡を削除する。DB削除前に state から即時除去して、
+  /// 削除したアイテムが一瞬戻るフリッカーを防ぐ。
+  Future<void> delete({
+    required String trackingNumber,
+    required String carrier,
+  }) async {
+    final current = state.value;
+    if (current != null) {
+      state = AsyncData(current
+          .where((t) =>
+              t.trackingNumber != trackingNumber || t.carrier.name != carrier)
+          .toList());
+    }
+
+    final db = await ref.read(databaseProvider.future);
+    final saved = await db.findByTrackingNumber(trackingNumber, carrier);
+    if (saved != null) {
+      await db.deleteTracking(saved.id);
+    }
+  }
+}
 
 final trackingDetailProvider =
     FutureProvider.family<TrackingInfo, ({String number, String carrier})>(
@@ -90,24 +127,5 @@ final addTrackingProvider = Provider<Future<void> Function({
     );
 
     await db.insertTracking(trackingNumber, carrier, nickname: nickname);
-  };
-});
-
-/// 追跡番号を削除するプロバイダー
-final deleteTrackingProvider = Provider<Future<void> Function({
-  required String trackingNumber,
-  required String carrier,
-})>((ref) {
-  final dbFuture = ref.watch(databaseProvider.future);
-
-  return ({
-    required String trackingNumber,
-    required String carrier,
-  }) async {
-    final db = await dbFuture;
-    final saved = await db.findByTrackingNumber(trackingNumber, carrier);
-    if (saved != null) {
-      await db.deleteTracking(saved.id);
-    }
   };
 });
