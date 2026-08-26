@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ウィジェットの背景（アプリのプライマリカラー #1565C0 を明示指定。
+     ライト/ダーク両方のランチャーテーマで意図的に見える濃色カードにする） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#1565C0" />
+    <corners android:radius="16dp" />
+</shape>

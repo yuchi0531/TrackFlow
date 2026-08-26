@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:trackflow/domain/tracking_number.dart';
 
 part 'database.g.dart';
 
@@ -60,18 +61,42 @@ class AppDatabase extends _$AppDatabase {
         .get();
   }
 
-  Future<SavedTracking?> findByTrackingNumber(String number, String carrier) {
-    return (select(savedTrackings)
+  /// 追跡番号（ハイフン有無どちらでも）とキャリアで検索する。
+  ///
+  /// 新規レコードは [insertTracking] で正規化（ハイフン除去）済みの数字のみで保存されるが、
+  /// 正規化導入前のレガシーデータにはハイフン付きで保存されたものもある。
+  /// まず正規化済みと生の両方でSQL検索し、見つからない場合は保存値を正規化して
+  /// 比較することで、ハイフンの有無にかかわらず同一の追跡として検索できる。
+  Future<SavedTracking?> findByTrackingNumber(String number, String carrier) async {
+    final normalized = TrackingNumberValidator.normalize(number);
+    final direct = await (select(savedTrackings)
           ..where((t) =>
-              t.trackingNumber.equals(number) & t.carrier.equals(carrier)))
+              (t.trackingNumber.equals(normalized) |
+                  t.trackingNumber.equals(number)) &
+              t.carrier.equals(carrier)))
         .getSingleOrNull();
+    if (direct != null) return direct;
+
+    // レガシーフォールバック: ハイフン付きで保存されたレコードは
+    // 正規化済み番号のSQL検索にヒットしないため、保存値を正規化して比較する。
+    final candidates = await (select(savedTrackings)
+          ..where((t) => t.carrier.equals(carrier)))
+        .get();
+    for (final candidate in candidates) {
+      if (TrackingNumberValidator.normalize(candidate.trackingNumber) ==
+          normalized) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   Future<int> insertTracking(String trackingNumber, String carrier,
       {String? nickname}) {
     return into(savedTrackings).insert(
       SavedTrackingsCompanion(
-        trackingNumber: Value(trackingNumber),
+        trackingNumber:
+            Value(TrackingNumberValidator.normalize(trackingNumber)),
         carrier: Value(carrier),
         nickname: Value(nickname),
       ),
@@ -87,15 +112,38 @@ class AppDatabase extends _$AppDatabase {
     return (delete(savedTrackings)..where((t) => t.id.equals(id))).go();
   }
 
+  /// 追跡番号（ハイフン有無どちらでも）とキャリアで最新の履歴を取得する。
+  ///
+  /// 履歴テーブルにも正規化導入前のレガシーデータ（ハイフン付きキー）が
+  /// 残っているため、まず正規化済みと生の両方でSQL検索し、見つからない場合は
+  /// 保存値を正規化して比較する。
   Future<TrackingHistory?> getLatestHistory(
-      String trackingNumber, String carrier) {
-    return (select(trackingHistories)
+      String trackingNumber, String carrier) async {
+    final normalized = TrackingNumberValidator.normalize(trackingNumber);
+    final direct = await (select(trackingHistories)
           ..where((t) =>
-              t.trackingNumber.equals(trackingNumber) &
+              (t.trackingNumber.equals(normalized) |
+                  t.trackingNumber.equals(trackingNumber)) &
               t.carrier.equals(carrier))
           ..orderBy([(t) => OrderingTerm.desc(t.fetchedAt)])
           ..limit(1))
         .getSingleOrNull();
+    if (direct != null) return direct;
+
+    // レガシーフォールバック: ハイフン付きで保存された履歴は
+    // 正規化済み番号のSQL検索にヒットしないため、保存値を正規化して比較する。
+    // 最新のもの（fetchedAt降順）から順に比較する。
+    final candidates = await (select(trackingHistories)
+          ..where((t) => t.carrier.equals(carrier))
+          ..orderBy([(t) => OrderingTerm.desc(t.fetchedAt)]))
+        .get();
+    for (final candidate in candidates) {
+      if (TrackingNumberValidator.normalize(candidate.trackingNumber) ==
+          normalized) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   /// 全アクティブな追跡に対する最新の履歴を一括取得

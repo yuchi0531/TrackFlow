@@ -32,6 +32,21 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- ホーム画面ウィジェット。
+             exported=true: ランチャーのウィジェットピッカーがバインドし、
+             AppWidgetHost.bindAppWidgetIdIfAllowed 経由で配置できる必要があるため
+             （システム/ランチャーがプロバイダを発見・バインドする）。 -->
+        <receiver
+            android:name=".TrackingWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/tracking_widget_info" />
+        </receiver>
     </application>
     <queries>
         <intent>

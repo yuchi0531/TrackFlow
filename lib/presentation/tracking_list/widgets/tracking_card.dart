@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:trackflow/domain/entities/carrier.dart';
 import 'package:trackflow/domain/entities/tracking_info.dart';
 
@@ -86,6 +87,24 @@ class TrackingCard extends StatelessWidget {
     return '${diff.inDays ~/ 7}週間前';
   }
 
+  /// 最終更新が48時間（2日）以上前かどうか
+  bool get _isStale =>
+      info.lastUpdated != null &&
+      DateTime.now().difference(info.lastUpdated!).inHours >= 48;
+
+  /// 更新停滞時の警告色（橙色系）
+  Color get _staleColor => Colors.orange.shade800;
+
+  /// 追跡番号をクリップボードにコピー
+  Future<void> _copyTrackingNumber(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: info.trackingNumber));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('コピーしました')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -103,6 +122,7 @@ class TrackingCard extends StatelessWidget {
       ),
       child: InkWell(
         onTap: onTap,
+        onLongPress: () => _copyTrackingNumber(context),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(4, 14, 16, 14),
           child: Row(
@@ -195,12 +215,28 @@ class TrackingCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              // 最終更新時間
+              // 最終更新時間（2日以上停滞時は警告表示）
               if (info.lastUpdated != null)
-                Text(
-                  _timeAgo(info.lastUpdated!),
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                Tooltip(
+                  message: _isStale ? '2日以上更新なし' : '',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_isStale) ...[
+                        Icon(Icons.warning_amber,
+                            size: 16, color: _staleColor),
+                        const SizedBox(width: 2),
+                      ],
+                      Text(
+                        _timeAgo(info.lastUpdated!),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: _isStale
+                              ? _staleColor
+                              : theme.colorScheme.onSurfaceVariant,
+                          fontWeight: _isStale ? FontWeight.w600 : null,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
             ],

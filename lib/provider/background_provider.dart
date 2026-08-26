@@ -7,6 +7,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:trackflow/data/local/database.dart';
 import 'package:trackflow/data/scraping/carrier_tracker.dart';
 import 'package:trackflow/domain/entities/carrier.dart';
+import 'widget_snapshot_provider.dart';
 
 const _backgroundTaskName = 'trackflow_background_fetch';
 const _periodicTaskName = 'trackflow_periodic';
@@ -14,6 +15,11 @@ const _periodicTaskName = 'trackflow_periodic';
 /// 設定キー（callbackDispatcherで直接SharedPreferencesを読むため定数化）
 const _keyNotifyDelivery = 'notify_delivery';
 const _keyNotifyStatusChange = 'notify_status_change';
+const _keyNotifyDeliveryDay = 'delivery_day_notify';
+
+/// 配達予定日当日の通知済み記録キーのプレフィックス
+/// `delivery_day_notified_<追跡番号>` = `YYYY/MM/DD`（同一日は再通知しない）
+const _deliveryDayNotifiedPrefix = 'delivery_day_notified_';
 
 FlutterLocalNotificationsPlugin? _notifications;
 
@@ -117,6 +123,7 @@ void callbackDispatcher() {
       final prefs = await SharedPreferences.getInstance();
       final notifyDelivery = prefs.getBool(_keyNotifyDelivery) ?? true;
       final notifyStatusChange = prefs.getBool(_keyNotifyStatusChange) ?? false;
+      final notifyDeliveryDay = prefs.getBool(_keyNotifyDeliveryDay) ?? true;
 
       // 通知チャンネルを確実に作成（バックグラウンドIsolateでも必要）
       await initNotificationChannels();
@@ -169,11 +176,32 @@ void callbackDispatcher() {
               );
             }
           }
+
+          // 配達予定日当日の通知（設定ON・配達完了済み以外・1日1回のみ）
+          if (notifyDeliveryDay &&
+              !isDelivered &&
+              isDeliveryToday(info.estimatedDelivery)) {
+            final todayKey = _dateKeyString(DateTime.now());
+            final notifiedKey =
+                '$_deliveryDayNotifiedPrefix${item.trackingNumber}';
+            if (prefs.getString(notifiedKey) != todayKey) {
+              await _showDeliveryDayNotification(
+                item.trackingNumber,
+                item.carrier,
+              );
+              await prefs.setString(notifiedKey, todayKey);
+            }
+          }
         } catch (e) {
           debugPrint(
               'Background fetch failed for ${item.trackingNumber}: $e');
         }
       }
+
+      // ウィジェット用スナップショットを更新（バックグラウンドIsolateでは
+      // MethodChannel が使えないため SharedPreferences への保存のみ行う。
+      // ネイティブ側の反映は次回フォアグラウンドでの更新時に実施される）
+      await updateWidgetSnapshot(db: db, notifyNative: false);
     } catch (e) {
       debugPrint('Background task failed: $e');
       return false;
@@ -257,11 +285,37 @@ Future<void> _showStatusChangeNotification(
   }
 }
 
+/// 配達予定日当日の通知を表示する。
+/// 既存の `status_channel` を再利用し、通知IDも `notificationIdFor(number)` で
+/// 同一番号への通知上書きを維持する。
+Future<void> _showDeliveryDayNotification(
+    String number, String carrier) async {
+  try {
+    final notifications = await _getNotifications();
+    final androidDetails = const AndroidNotificationDetails(
+      'status_channel',
+      'ステータス変更',
+      channelDescription: '荷物の配送状況が変更されたことをお知らせします',
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+    );
+    const iosDetails = DarwinNotificationDetails();
+    await notifications.show(
+      notificationIdFor(number),
+      '本日お届け予定',
+      '$carrier $number は本日のお届け予定です',
+      NotificationDetails(android: androidDetails, iOS: iosDetails),
+    );
+  } catch (e) {
+    debugPrint('Delivery day notification failed: $e');
+  }
+}
+
 final backgroundProvider = Provider<void>((ref) {});
 
 /// ステータス文字列が配達完了を示すかどうかを判定する。
 /// 各社の配達完了表現を網羅する。
-@visibleForTesting
+/// 一覧画面の絞り込み・自動アーカイブからも使用するため公開関数とする。
 bool isDeliveredStatus(String status) {
   final deliveredKeywords = [
     '配達完了', // ヤマト・佐川
@@ -271,6 +325,55 @@ bool isDeliveredStatus(String status) {
     'お届け完了', // 佐川
   ];
   return deliveredKeywords.any(status.contains);
+}
+
+/// 配達予定日文字列が「今日」の日付かどうかを判定する。
+///
+/// 各社の生テキスト形式に対応:
+/// - `YYYY/MM/DD`（例: 佐川 `配達予定日 2026/08/16`、ヤマト `2026/08/16（土）`）
+/// - `M/D` 年なし（例: ヤマト `8/16（金）09:00〜11:00`）
+///
+/// 年なしの場合は現在年を仮定し、未来日付なら年を1つ戻す
+/// （既存のヤマト/佐川トラッカー `_parseDate` と同じ年跨ぎロジック）。
+/// 日付を抽出できない場合は false。
+@visibleForTesting
+bool isDeliveryToday(String? estimatedDelivery) {
+  if (estimatedDelivery == null || estimatedDelivery.isEmpty) return false;
+
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+
+  // YYYY/MM/DD 形式を優先して抽出（年なし抽出が年付きの一部に掛からないように）
+  final fullMatch =
+      RegExp(r'(\d{4})/(\d{1,2})/(\d{1,2})').firstMatch(estimatedDelivery);
+  if (fullMatch != null) {
+    final month = int.parse(fullMatch.group(2)!);
+    final day = int.parse(fullMatch.group(3)!);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+    return DateTime(int.parse(fullMatch.group(1)!), month, day) == today;
+  }
+
+  // 年なし M/D 形式
+  final shortMatch =
+      RegExp(r'(\d{1,2})/(\d{1,2})').firstMatch(estimatedDelivery);
+  if (shortMatch != null) {
+    final month = int.parse(shortMatch.group(1)!);
+    final day = int.parse(shortMatch.group(2)!);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+    var date = DateTime(now.year, month, day);
+    // 未来日付なら年を1つ戻す（年跨ぎ対応）
+    if (date.isAfter(now)) date = DateTime(now.year - 1, month, day);
+    return date == today;
+  }
+
+  return false;
+}
+
+/// 日付を `YYYY/MM/DD` 形式の文字列にする（配達予定日当日の通知済み判定キー用）
+String _dateKeyString(DateTime date) {
+  final mm = date.month.toString().padLeft(2, '0');
+  final dd = date.day.toString().padLeft(2, '0');
+  return '${date.year}/$mm/$dd';
 }
 
 /// 更新間隔の文字列をDurationに変換

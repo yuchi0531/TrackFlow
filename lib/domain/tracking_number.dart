@@ -5,10 +5,16 @@ import 'package:trackflow/domain/entities/carrier.dart';
 /// Presentation 層から Repository の実装クラスに依存しないよう、
 /// 純粋な静的処理を domain 層へ分離した。
 class TrackingNumberValidator {
+  /// 追跡番号からハイフンを除去して正規化する（数字のみ）。
+  ///
+  /// DB保存・重複判定・各社へのスクレイピング送信は
+  /// この正規化後の番号で行う（`6232-0148-6493` と `623201486493` を同一視するため）。
+  static String normalize(String number) => number.replaceAll('-', '');
+
   /// 追跡番号の形式を検証する（10〜14桁の数字、ハイフン可）。
   static bool isValid(String number) {
     if (number.isEmpty) return false;
-    final cleaned = number.replaceAll('-', '');
+    final cleaned = normalize(number);
     if (!RegExp(r'^\d+$').hasMatch(cleaned)) return false;
     return cleaned.length >= 10 && cleaned.length <= 14;
   }
@@ -21,8 +27,12 @@ class TrackingNumberValidator {
   /// 佐川急便の追跡番号はヤマト運輸と同じ12桁のケースが多く、
   /// 桁数のみでは両者を確実に区別できないため、12桁の場合はヤマト運輸を優先する。
   /// それ以外の桁数（10桁や14桁など）の場合は null を返す。
+  ///
+  /// 現在のUI（追跡を追加画面）からは自動判別を削除したため、
+  /// アプリのUIからは使用されない。テスト（test/widget_test.dart の
+  /// 「detectCarrier」グループ）で使用されているため、メソッド自体は残す。
   static Carrier? detectCarrier(String trackingNumber) {
-    final cleaned = trackingNumber.replaceAll('-', '');
+    final cleaned = normalize(trackingNumber);
 
     if (cleaned.length == 11 || cleaned.length == 13) {
       return Carrier.japanPost;

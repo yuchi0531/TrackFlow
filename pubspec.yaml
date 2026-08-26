@@ -41,6 +41,18 @@ dependencies:
 
   # Date / Time
   intl: ^0.19.0
+  url_launcher: ^6.3.2
+  share_plus: ^13.3.0
+
+  # File (CSVエクスポート/インポートの保存・選択ダイアログ)
+  # 12.0.0-beta.7 を使用:
+  #  - 安定版(11.x)の Android build.gradle は AGP 9 で KGP を適用せず
+  #    Built-in Kotlin に依存するが、本アプリ(gradle.properties)は
+  #    android.builtInKotlin=false(legacy) のため Kotlin がコンパイルされず
+  #    ビルド失敗する。12.0.0-beta はプロパティを確認して KGP を適用する。
+  #  - win32 ^6 対応のため share_plus 13.x(win32 ^6) とも競合しない。
+  #  12安定版リリース後は自動で移行される。
+  file_picker: ^12.0.0-beta.7
 
 dev_dependencies:
   flutter_test:

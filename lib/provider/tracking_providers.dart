@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trackflow/domain/entities/carrier.dart';
 import 'package:trackflow/domain/entities/tracking_event.dart' as domain;
 import 'package:trackflow/domain/entities/tracking_info.dart';
+import 'package:trackflow/domain/tracking_number.dart';
 import 'database_provider.dart';
 import 'tracking_repository_provider.dart';
+import 'widget_snapshot_provider.dart';
 
 final trackingListProvider = AsyncNotifierProvider<TrackingListNotifier,
     List<TrackingInfo>>(TrackingListNotifier.new);
@@ -64,6 +68,10 @@ class TrackingListNotifier extends AsyncNotifier<List<TrackingInfo>> {
         ));
       }
     }
+
+    // ウィジェット用スナップショットを非同期で更新（fire-and-forget）
+    // 一覧更新のたびにホーム画面ウィジェットへ最新ステータスを反映する。
+    unawaited(updateWidgetSnapshot(db: db));
     return results;
   }
 
@@ -73,6 +81,9 @@ class TrackingListNotifier extends AsyncNotifier<List<TrackingInfo>> {
     required String trackingNumber,
     required String carrier,
   }) async {
+    // 一覧の表示値は正規化済みだが、防御的に正規化してから検索する
+    // （レガシーのハイフン付き保存値でも検索にヒットする）
+    trackingNumber = TrackingNumberValidator.normalize(trackingNumber);
     final current = state.value;
     if (current != null) {
       state = AsyncData(current
@@ -86,6 +97,9 @@ class TrackingListNotifier extends AsyncNotifier<List<TrackingInfo>> {
     if (saved != null) {
       await db.deleteTracking(saved.id);
     }
+
+    // 削除後にウィジェット用スナップショットを非同期で更新（fire-and-forget）
+    unawaited(updateWidgetSnapshot(db: db));
   }
 }
 
@@ -110,6 +124,11 @@ final addTrackingProvider = Provider<Future<void> Function({
     required String carrier,
     String? nickname,
   }) async {
+    // 追跡番号を正規化（ハイフン除去）してから重複チェック・fetch・保存を行う。
+    // これによりハイフンの有無で別レコードになることを防ぎ、
+    // 各社へのスクレイピング送信も数字のみになる。
+    trackingNumber = TrackingNumberValidator.normalize(trackingNumber);
+
     final db = await ref.read(databaseProvider.future);
     final existing =
         await db.findByTrackingNumber(trackingNumber, carrier);

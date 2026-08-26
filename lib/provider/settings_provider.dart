@@ -6,6 +6,7 @@ import 'package:trackflow/provider/background_provider.dart';
 class SettingsKeys {
   static const notifyDelivery = 'notify_delivery';
   static const notifyStatusChange = 'notify_status_change';
+  static const deliveryDayNotify = 'delivery_day_notify';
   static const updateInterval = 'update_interval';
 
   SettingsKeys._();
@@ -44,6 +45,13 @@ class SettingsController extends AsyncNotifier<SharedPreferences> {
     state = AsyncValue.data(prefs);
   }
 
+  /// 配達予定日当日通知トグルを更新して保存
+  Future<void> setNotifyDeliveryDay(bool value) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(SettingsKeys.deliveryDayNotify, value);
+    state = AsyncValue.data(prefs);
+  }
+
   /// 更新間隔を更新して保存
   Future<void> setUpdateInterval(String value) async {
     final prefs = await _getPrefs();
@@ -77,6 +85,13 @@ final updateIntervalProvider = Provider<String>((ref) {
   return prefs?.getString(SettingsKeys.updateInterval) ?? '30分';
 });
 
+/// 配達予定日当日通知トグルの状態
+/// prefs未解決時はデフォルト値（true）を返し、解決後に実際の値へ更新される。
+final notifyDeliveryDayProvider = Provider<bool>((ref) {
+  final prefs = ref.watch(settingsControllerProvider).valueOrNull;
+  return prefs?.getBool(SettingsKeys.deliveryDayNotify) ?? true;
+});
+
 /// 配達完了通知トグルを更新する関数
 final setNotifyDeliveryProvider = Provider<Future<void> Function(bool)>((ref) {
   final controller = ref.read(settingsControllerProvider.notifier);
@@ -95,4 +110,11 @@ final setUpdateIntervalProvider =
     Provider<Future<void> Function(String)>((ref) {
   final controller = ref.read(settingsControllerProvider.notifier);
   return controller.setUpdateInterval;
+});
+
+/// 配達予定日当日通知トグルを更新する関数
+final setNotifyDeliveryDayProvider =
+    Provider<Future<void> Function(bool)>((ref) {
+  final controller = ref.read(settingsControllerProvider.notifier);
+  return controller.setNotifyDeliveryDay;
 });
