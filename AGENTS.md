@@ -4,7 +4,7 @@
 
 TrackFlow - ヤマト運輸・佐川急便・日本郵便 統合荷物追跡アプリ。3社の公式HTML追跡ページをスクレイピングして配送状況を取得する Flutter アプリ。個人向け公開APIは存在しない。
 
-**Android only**（iOSディレクトリ削除済み）。現在のバージョンは 0.0.6（pubspec.yaml の version のみ）。
+**Android only**（iOSディレクトリ削除済み）。現在のバージョンは 0.0.7（pubspec.yaml の version のみ）。
 
 ## Setup commands
 
