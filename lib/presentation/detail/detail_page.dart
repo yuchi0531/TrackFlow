@@ -78,9 +78,17 @@ class DetailPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final trackingAsync = ref.watch(trackingDetailProvider(
-      (number: trackingNumber, carrier: carrier),
-    ));
+    final detailProvider =
+        trackingDetailProvider((number: trackingNumber, carrier: carrier));
+
+    // 詳細画面の取得でDBが更新されたら、一覧（ShellRouteでマウントされたまま）へ
+    // 反映する。一覧の再取得は trackingListProvider の build() 内でホームウィジェット
+    // のスナップショットも更新するため、ここでは invalidate のみ行う。
+    ref.listen(detailProvider, (previous, next) {
+      next.whenData((_) => ref.invalidate(trackingListProvider));
+    });
+
+    final trackingAsync = ref.watch(detailProvider);
 
     return Scaffold(
       appBar: AppBar(

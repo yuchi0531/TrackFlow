@@ -108,8 +108,41 @@ class AppDatabase extends _$AppDatabase {
   /// ソフトデリート（isActive=false）だと行が蓄積し続け、
   /// `findByTrackingNumber` がフィルタしないため再登録できなくなる。
   /// ハードデリートにより行が残らず、削除後の再登録が可能になる。
-  Future<int> deleteTracking(int id) {
-    return (delete(savedTrackings)..where((t) => t.id.equals(id))).go();
+  ///
+  /// 併せて、その追跡に紐づく `TrackingHistories` と `TrackingEventEntries` も
+  /// 削除する。履歴を残すと以下の不具合が生じるため:
+  /// - 削除→再登録時に古いキャッシュが最新履歴として復活し、再取得前に
+  ///   古いステータスが一覧に表示される
+  /// - 孤児行が SQLite ファイル内に無期限に蓄積する
+  ///
+  /// レガシーデータ（ハイフン付き保存）も取りこぼさないよう、保存値を正規化して比較する。
+  Future<int> deleteTracking(int id) async {
+    final saved = await (select(savedTrackings)..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+    if (saved == null) return 0;
+
+    final normalized = TrackingNumberValidator.normalize(saved.trackingNumber);
+    final histories = await (select(trackingHistories)
+          ..where((t) => t.carrier.equals(saved.carrier)))
+        .get();
+    final historyIds = <int>[];
+    for (final h in histories) {
+      if (TrackingNumberValidator.normalize(h.trackingNumber) == normalized) {
+        historyIds.add(h.id);
+      }
+    }
+
+    return transaction(() async {
+      if (historyIds.isNotEmpty) {
+        await (delete(trackingEventEntries)
+              ..where((t) => t.historyId.isIn(historyIds)))
+            .go();
+        await (delete(trackingHistories)
+              ..where((t) => t.id.isIn(historyIds)))
+            .go();
+      }
+      return (delete(savedTrackings)..where((t) => t.id.equals(id))).go();
+    });
   }
 
   /// 追跡番号（ハイフン有無どちらでも）とキャリアで最新の履歴を取得する。
@@ -120,12 +153,17 @@ class AppDatabase extends _$AppDatabase {
   Future<TrackingHistory?> getLatestHistory(
       String trackingNumber, String carrier) async {
     final normalized = TrackingNumberValidator.normalize(trackingNumber);
+    // fetchedAt が同一秒の場合に備え、auto-increment の id を副キーに使う
+    // （INSERT順 = 更新順のため、id 降順が真の最新）。
     final direct = await (select(trackingHistories)
           ..where((t) =>
               (t.trackingNumber.equals(normalized) |
                   t.trackingNumber.equals(trackingNumber)) &
               t.carrier.equals(carrier))
-          ..orderBy([(t) => OrderingTerm.desc(t.fetchedAt)])
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.fetchedAt),
+            (t) => OrderingTerm.desc(t.id),
+          ])
           ..limit(1))
         .getSingleOrNull();
     if (direct != null) return direct;
@@ -168,7 +206,10 @@ class AppDatabase extends _$AppDatabase {
 
     final result = <String, TrackingHistory>{};
     for (final h in histories) {
-      final key = '${h.trackingNumber}_${h.carrier}';
+      // キーは正規化した追跡番号で作る。レガシーのハイフン付き履歴も
+      // savedTrackings（正規化済み）と一致させ、一覧で履歴が引けるようにする。
+      final key =
+          '${TrackingNumberValidator.normalize(h.trackingNumber)}_${h.carrier}';
       result[key] = h;
     }
     return result;
@@ -205,13 +246,17 @@ class AppDatabase extends _$AppDatabase {
       String? estimatedDelivery}) async {
     final latest = await getLatestHistory(trackingNumber, carrier);
     if (latest != null && latest.currentStatus == currentStatus) {
-      // ステータスが変わっていない場合は既存レコードを更新
+      // ステータスが変わっていない場合は既存レコードを更新。
+      // itemType / estimatedDelivery は今回取得できなかった（null）場合、
+      // 既存値を保持する（null で上書きして情報を失わない）。
       await (update(trackingHistories)
             ..where((t) => t.id.equals(latest.id)))
           .write(
         TrackingHistoriesCompanion(
-          itemType: Value(itemType),
-          estimatedDelivery: Value(estimatedDelivery),
+          itemType: itemType == null ? const Value.absent() : Value(itemType),
+          estimatedDelivery: estimatedDelivery == null
+              ? const Value.absent()
+              : Value(estimatedDelivery),
           fetchedAt: Value(DateTime.now()),
         ),
       );
@@ -227,6 +272,32 @@ class AppDatabase extends _$AppDatabase {
         estimatedDelivery: Value(estimatedDelivery),
       ),
     );
+  }
+
+  /// 履歴保存とイベント保存を1トランザクションで行う。
+  ///
+  /// `saveHistory` と `saveEvents` を別々に呼ぶと、間にプロセスkillや
+  /// クラッシュが挟まった場合に「新historiesだけが残りイベントが無い」
+  /// 中途半端な状態になり得るため、必ず一括で実行する。
+  Future<int> saveHistoryWithEvents(
+    String trackingNumber,
+    String carrier, {
+    String? itemType,
+    required String currentStatus,
+    String? estimatedDelivery,
+    required List<({String rawDate, String status, String? location})> events,
+  }) {
+    return transaction(() async {
+      final historyId = await saveHistory(
+        trackingNumber,
+        carrier,
+        itemType: itemType,
+        currentStatus: currentStatus,
+        estimatedDelivery: estimatedDelivery,
+      );
+      await saveEvents(historyId, events);
+      return historyId;
+    });
   }
 
   Future<List<TrackingEventEntry>> getEventsForHistory(int historyId) {

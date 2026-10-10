@@ -7,8 +7,11 @@ import 'package:trackflow/domain/entities/tracking_info.dart';
 import 'package:trackflow/domain/repositories/tracking_repository.dart';
 import 'package:trackflow/domain/tracking_number.dart';
 
-/// TrackingRepositoryの実装
-class TrackingRepositoryImpl implements TrackingRepository {
+/// TrackingRepositoryの実装。
+///
+/// 抽象基底クラスの具象デフォルト実装（[TrackingRepository.carrierCandidates] /
+/// [TrackingRepository.detectCarrierAndFetch]）を継承するため `extends` を使用する。
+class TrackingRepositoryImpl extends TrackingRepository {
   final AppDatabase _database;
 
   TrackingRepositoryImpl(this._database);
@@ -24,18 +27,14 @@ class TrackingRepositoryImpl implements TrackingRepository {
     try {
       final info = await tracker.fetch(trackingNumber);
 
-      // キャッシュに保存
-      final historyId = await _database.saveHistory(
+      // キャッシュに保存（履歴とイベントを1トランザクションで）
+      await _database.saveHistoryWithEvents(
         trackingNumber,
         carrier,
         itemType: info.itemType,
         currentStatus: info.currentStatus,
         estimatedDelivery: info.estimatedDelivery,
-      );
-
-      await _database.saveEvents(
-        historyId,
-        info.events
+        events: info.events
             .map((e) => (
                   rawDate: e.rawDate,
                   status: e.status,
@@ -104,7 +103,7 @@ class TrackingRepositoryImpl implements TrackingRepository {
 
   /// 追跡番号の桁数からキャリアを自動判別する。
   ///
-  /// domain 層のユーティリティを参照する薄いラッパー。
+  /// domain 層のユーティリティを参照する薄いラッパー（単一番号の推定のみ）。
   static Carrier? detectCarrier(String trackingNumber) =>
       TrackingNumberValidator.detectCarrier(trackingNumber);
 }

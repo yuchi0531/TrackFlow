@@ -55,11 +55,14 @@ lib/
 ├── app.dart                             # MaterialApp.router
 ├── core/
 │   ├── theme/app_theme.dart             # CardThemeData (not CardTheme), M3, ライト/ダーク両対応
-│   └── constants/carrier_urls.dart      # 3社スクレイピングURL + 共通User-Agent + ブラウザ用URL
+│   └── constants/
+│       ├── carrier_urls.dart            # 3社スクレイピングURL + 共通User-Agent + ブラウザ用URL
+│       └── settings_keys.dart           # SettingsKeys (UI/背景Isolate共通の設定キー定数)
 ├── domain/
 │   ├── entities/                        # Carrier enum, TrackingInfo, TrackingEvent (freezed不使用)
-│   ├── tracking_number.dart             # TrackingNumberValidator (isValid / detectCarrier)
-│   └── repositories/                    # 抽象インターフェース
+│   ├── tracking_number.dart             # TrackingNumberValidator (isValid / detectCarrier / carrierCandidates)
+│   ├── tracking_status.dart             # isDeliveredStatus (配達完了判定の共有関数)
+│   └── repositories/                    # 抽象インターフェース (detectCarrierAndFetch の既定実装)
 ├── data/
 │   ├── scraping/                        # JapanPostTracker, YamatoTracker, SagawaTracker, TrackerFactory, TrackerException
 │   ├── csv/                             # csv_export.dart / csv_import.dart (純粋関数)
@@ -68,14 +71,14 @@ lib/
 ├── provider/
 │   ├── database_provider.dart           # FutureProvider<AppDatabase> (ファイル失敗時はinMemoryフォールバック)
 │   ├── tracking_repository_provider.dart
-│   ├── tracking_providers.dart          # trackingList, trackingDetail, addTracking, deleteTracking (+ウィジェットスナップショット更新)
-│   ├── settings_provider.dart           # AsyncNotifier<SharedPreferences>、設定キー定数
+│   ├── tracking_providers.dart          # trackingList, trackingDetail(autoDispose), addTracking, addTrackingAuto, deleteTracking (+ウィジェットスナップショット更新)
+│   ├── settings_provider.dart           # AsyncNotifier<SharedPreferences>、設定キー (SettingsKeysをre-export)
 │   ├── background_provider.dart         # Workmanager + 通知 + isDeliveryToday (callbackDispatcher)
 │   └── widget_snapshot_provider.dart    # ウィジェット用JSONスナップショット + MethodChannel
 └── presentation/
     ├── router/app_router.dart           # ShellRoute + NavigationBar (追跡一覧/設定)、他はpush
     ├── tracking_list/                   # 絞り込み + 並び替え + 自動アーカイブ + 停滞警告 + Dismissible
-    ├── add_tracking/                    # 複数番号一括追加 (maxLines:3) + 配送会社 手動選択必須
+    ├── add_tracking/                    # 複数番号一括追加 (maxLines:3) + 配送会社 自動判定(既定)/手動選択
     ├── detail/                          # タイムライン + 公式サイトリンク + コピー/共有
     └── settings/                        # 更新間隔 + 通知トグル(配達予定日当日含む) + CSV入出力 + プライバシーポリシー
 ```
@@ -86,24 +89,28 @@ lib/
 - **ドメインEntity**: freezed 不使用。Driftのgenerated codeと衝突するため。素のDartクラス。
 - **Driftテーブル名**: `TrackingEventEntries` を使用（`TrackingEvents` はdomainの `TrackingEvent` と衝突）
 - **DB構築**: `AppDatabase.create()` 非同期ファクトリ（`LazyDatabase` 不使用）。`AppDatabase.inMemory()` はテスト専用。**バックグラウンドIsolateでも必ず `create()` を使う**（過去にinMemory使用でデータ連携が壊れた実績あり）
-- **saveHistory の更新ポリシー**: 同一ステータスなら既存レコードを `fetchedAt` 更新のみ、ステータス変化時のみ新規INSERT（テーブル肥大防止＋通知の前回比較に利用）
+- **saveHistory の更新ポリシー**: 同一ステータスなら既存レコードを `fetchedAt` 更新のみ、ステータス変化時のみ新規INSERT（テーブル肥大防止＋通知の前回比較に利用）。**itemType / estimatedDelivery は今回取得値が null なら `Value.absent()` で既存値を保持**（null上書きで商品種別・予定日を失わない）
+- **saveHistoryWithEvents**: 履歴保存とイベント保存を1トランザクションで行う。`fetchTracking` / callbackDispatcher はこちらを使う（間にプロセスkillが挟まっても「履歴だけ残りイベント無し」を防ぐ）
 - **saveEvents は delete→insert**: 同一 `historyId` の既存イベントを全削除してから挿入（重複防止）
-- **Provider**: `FutureProvider` + `.future` で非同期DBアクセスを解決
+- **deleteTracking は履歴・イベントも削除**: `transaction` 内で対象 `TrackingHistories` と `TrackingEventEntries` を削除してから `SavedTrackings` を削除。FK は SQLite で既定無効のため、孤児データ蓄積と「再登録時に古い履歴が復活」を防ぐ
+- **Provider**: `FutureProvider` + `.future` で非同期DBアクセスを解決。詳細画面の `trackingDetailProvider` は `.autoDispose`（閉じて再度開くと必ず再取得）
 - **ナビゲーション**: タブ外画面は `context.push()`（`context.go()` はスタック破壊）。詳細画面は `/detail/:number?carrier=xxx`
 - **テーマ**: `CardThemeData`（`CardTheme` は Flutter 3.44 でdeprecated）
 - **アイコン**: adaptive icon（`drawable/ic_launcher_foreground.png` 円形、`ic_launcher_background.png` #FDFDFD）
 - **minSdk**: 24（Flutter 3.44 のデフォルト）
-- **配送会社は手動選択必須**: 自動判別はUIから削除（ユーザー要望）。未選択なら「配送会社を選択してください」SnackBar で登録しない。`detectCarrier()` は UI 未使用・テスト用に残置
-- **一括追加**: 番号フィールドは `maxLines:3` で改行・カンマ・スペース区切り対応。`splitTrackingNumbers()` / `buildAddResultSummary()` はトップレベル公開関数（テスト可能）。配送会社1つを全番号に適用
-- **isDeliveredStatus は公開関数**: `@visibleForTesting` を外した。一覧の絞り込み・自動アーカイブとバックグラウンド通知判定の両方で使用
+- **配送会社の自動判定 (v0.0.7)**: 追加画面の既定は「自動判定」。`TrackingNumberValidator.carrierCandidates(number)` が桁数から候補を優先順に列挙し（10桁=佐川のみ / 11桁=日本郵便→ヤマト / 12桁=ヤマト→佐川→日本郵便 / 13桁=日本郵便 / それ以外=全社）、`TrackingRepository.detectCarrierAndFetch()` が候補へ順に問い合わせ最初に成功した会社を採用する（`addTrackingAutoProvider`）。**12桁は3社すべて衝突するため桁数だけでは不確定**。手動選択も `CarrierSelector` に残置（`kAutoDetectCarrier='auto'`）。`detectCarrier()`（単一推定）は 11〜13桁のみ第一候補を返しテスト用に残置
+- **一括追加**: 番号フィールドは `maxLines:3` で改行・カンマ・スペース区切り対応。`splitTrackingNumbers()` / `buildAddResultSummary()` はトップレベル公開関数（テスト可能）。**重複除去は正規化後**（`1234-5678-9012` と `123456789012` を同一視）。自動判定時は全社で登録済みチェックしてから問い合わせる
+- **isDeliveredStatus は domain 層の共有関数**: `lib/domain/tracking_status.dart` に定義。一覧の絞り込み・自動アーカイブ・`TrackingCard` の色/アイコン・バックグラウンド通知判定で共有（重複定義しない）
+- **配達完了は停滞警告の対象外**: `TrackingCard._isStale` は配達完了ステータスを除外（自動更新しない仕様のため48時間で誤警告しないように）
 
 ## Background / notification gotchas (重要)
 
 - `main()` では `await initBackgroundService()` → `await initNotificationChannels()` → `runApp()` の順。awaitしないとプロセスkill時に定期タスクが登録されない（起動時のウィジェットスナップショット更新は fire-and-forget）
 - **通知IDは追跡番号からハッシュ安定生成**: `notificationIdFor(number)`（**FNV-1a 32bit を自前実装** → `& 0x7FFFFFFF` → `% 2000000000 + 1`）。Dart の `String.hashCode` はプロセスをまたぐ同一性が保証されないため、workmanager の別プロセス起動でも同一IDになるよう自前実装。Android の NotificationManager は32bit intのためビットマスク必須
 - **通知チャンネル2種**: `delivery_channel`(配達完了, Importance.high) / `status_channel`(ステータス変更, default)。callbackDispatcher内でも作成必須
-- **設定キーは文字列定数**: `notify_delivery`, `notify_status_change`, `delivery_day_notify`, `update_interval`。背景IsolateはProviderを読めないため callbackDispatcher は `SharedPreferences.getInstance()` を直接読む
-- **配達完了判定**: `isDeliveredStatus()` が「配達完了/お届け済み/投函完了/配達済み/お届け完了」の5キーワードで判定（各社表現が異なるため文字列contains）
+- **設定キーは `lib/core/constants/settings_keys.dart` の `SettingsKeys` に一本化**: `notify_delivery`, `notify_status_change`, `delivery_day_notify`, `update_interval`。UI Provider と callbackDispatcher の双方が同一定数を参照（文字列のずれ防止）。背景IsolateはProviderを読めないため callbackDispatcher は `SharedPreferences.getInstance()` を直接読む
+- **配達完了判定**: `isDeliveredStatus()`（`lib/domain/tracking_status.dart`）が「配達完了/お届け済み/投函完了/配達済み/お届け完了」の5キーワードで判定（各社表現が異なるため文字列contains）
+- **配達完了済みは自動更新しない (v0.0.7)**: callbackDispatcher のループ先頭で `shouldAutoUpdate(prevHistory?.currentStatus)` を判定し、最新キャッシュが配達完了ステータスなら `continue` して各社への再取得（スクレイピング）と通知をスキップ。履歴なし（null）は初回取得のため更新する。判定はキャッシュ済みステータスのみを根拠とするため、再び輸送中に変化した場合は手動更新後のキャッシュ反映で自動更新が再開される。`shouldAutoUpdate()` は公開・`@visibleForTesting`
 - **配達予定日当日通知 (v0.0.6)**: 設定キー `delivery_day_notify`（デフォルト true）。**zonedSchedule は不使用・timezone パッケージ追加なし**。callbackDispatcher 内で `isDeliveryToday(estimatedDelivery)` 判定（`YYYY/MM/DD` 優先、年なし `M/D` は現在年仮定+未来なら年を1つ戻す）。**1日1回制御**: `delivery_day_notified_<追跡番号>` = `YYYY/MM/DD` を保存し、同一日は再通知しない。配達完了済みは通知しない。チャンネルは status_channel 再利用、通知IDは notificationIdFor
 - **更新間隔**: `'15分'|'30分'|'1時間'|'3時間'` を `intervalToDuration()` でDuration変換。設定変更時は `updateBackgroundTaskInterval()` で cancel→再登録
 - **trackingListProvider はN+1回避のバッチ取得**: `getAllLatestHistories()`（id.max() GROUP BY）+ `getEventsForHistories()` を1回ずつ

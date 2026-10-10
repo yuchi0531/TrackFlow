@@ -1,16 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:trackflow/core/constants/settings_keys.dart';
 import 'package:trackflow/provider/background_provider.dart';
 
-/// 設定のキー定数
-class SettingsKeys {
-  static const notifyDelivery = 'notify_delivery';
-  static const notifyStatusChange = 'notify_status_change';
-  static const deliveryDayNotify = 'delivery_day_notify';
-  static const updateInterval = 'update_interval';
-
-  SettingsKeys._();
-}
+export 'package:trackflow/core/constants/settings_keys.dart'
+    show SettingsKeys;
 
 /// SharedPreferences の読み書きを一元管理するNotifier。
 ///

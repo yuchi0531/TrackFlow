@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:trackflow/domain/entities/tracking_info.dart';
+import 'package:trackflow/domain/tracking_status.dart';
 import 'package:trackflow/presentation/tracking_list/widgets/empty_state.dart';
 import 'package:trackflow/presentation/tracking_list/widgets/tracking_card.dart';
-import 'package:trackflow/provider/background_provider.dart';
 import 'package:trackflow/provider/tracking_providers.dart';
 
 /// ステータス絞り込みの選択肢

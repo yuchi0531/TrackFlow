@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
@@ -9,6 +10,7 @@ import 'package:trackflow/provider/background_provider.dart';
 import 'package:trackflow/provider/database_provider.dart';
 import 'package:trackflow/provider/settings_provider.dart';
 import 'package:trackflow/provider/tracking_providers.dart';
+import 'package:trackflow/provider/widget_snapshot_provider.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -235,6 +237,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         imported++;
       }
       ref.invalidate(trackingListProvider);
+      // インポート直後は一覧が未表示（設定タブ）でウィジェット更新が走らないため、
+      // ここでホームウィジェットのスナップショットも更新する（fire-and-forget）。
+      unawaited(updateWidgetSnapshot(db: db));
 
       if (!mounted) return;
       messenger.showSnackBar(

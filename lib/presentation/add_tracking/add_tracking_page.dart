@@ -15,7 +15,9 @@ class AddTrackingPage extends ConsumerStatefulWidget {
 class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
   final _numberController = TextEditingController();
   final _nicknameController = TextEditingController();
-  String? _selectedCarrier;
+
+  /// 既定は「自動判定」。明示的に会社を選ぶこともできる。
+  String? _selectedCarrier = kAutoDetectCarrier;
   bool _isSubmitting = false;
 
   @override
@@ -39,7 +41,8 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
     final numbers = splitTrackingNumbers(_numberController.text);
     if (numbers.isEmpty) return;
 
-    // 配送会社は手動選択を必須にする。未選択の場合は選択を促す。
+    // 配送会社は「自動判定」または明示選択。いずれも未選択になることはないが、
+    // 防御的に null の場合は選択を促す。
     final carrier = _selectedCarrier;
     if (carrier == null) {
       if (mounted) {
@@ -49,10 +52,15 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
       }
       return;
     }
+    final autoDetect = carrier == kAutoDetectCarrier;
 
-    // 形式が正しい番号のみを対象にする（無効な番号はスキップ）
-    final validNumbers =
-        numbers.where(TrackingNumberValidator.isValid).toList();
+    // 形式が正しい番号のみを対象にする（無効な番号はスキップ）。
+    // 重複判定は正規化後（ハイフン除去後）に行う。`1234-5678-9012` と
+    // `123456789012` を別物として二重登録しようとするのを防ぐ。
+    final validNumbers = numbers
+        .where(TrackingNumberValidator.isValid)
+        .map(TrackingNumberValidator.normalize)
+        .toList();
     final invalidCount = numbers.length - validNumbers.length;
     if (validNumbers.isEmpty) {
       if (mounted) {
@@ -70,6 +78,7 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
 
     try {
       final addTracking = ref.read(addTrackingProvider);
+      final addTrackingAuto = ref.read(addTrackingAutoProvider);
       final nickname = _nicknameController.text.trim().isEmpty
           ? null
           : _nicknameController.text.trim();
@@ -79,11 +88,23 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
       final failures = <String>[];
       for (final number in uniqueNumbers) {
         try {
-          await addTracking(
-            trackingNumber: number,
-            carrier: carrier,
-            nickname: nickname,
-          );
+          if (autoDetect) {
+            final detected = await addTrackingAuto(
+              trackingNumber: number,
+              nickname: nickname,
+            );
+            if (detected == null) {
+              // どの会社でも情報を取得できなかった
+              failures.add('配送会社を自動判定できませんでした');
+              continue;
+            }
+          } else {
+            await addTracking(
+              trackingNumber: number,
+              carrier: carrier,
+              nickname: nickname,
+            );
+          }
           successCount++;
         } catch (e) {
           failures.add(_friendlyErrorMessage(e));

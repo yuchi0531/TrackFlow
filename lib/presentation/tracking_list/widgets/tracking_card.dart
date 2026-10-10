@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:trackflow/domain/entities/carrier.dart';
 import 'package:trackflow/domain/entities/tracking_info.dart';
+import 'package:trackflow/domain/tracking_status.dart';
 
 class TrackingCard extends StatelessWidget {
   final TrackingInfo info;
@@ -16,7 +17,8 @@ class TrackingCard extends StatelessWidget {
   /// 配送状況に応じたインジケーター色
   Color _statusColor(String status) {
     final s = status;
-    if (s.contains('配達完了') || s.contains('お届け済み') || s.contains('投函完了')) {
+    // 配達完了はドメインの共通判定に委譲する（「配達済み」「お届け完了」も含む）
+    if (isDeliveredStatus(s)) {
       return Colors.green;
     }
     if (s.contains('持ち出し中') || s.contains('配達中') || s.contains('輸送中')) {
@@ -34,7 +36,8 @@ class TrackingCard extends StatelessWidget {
   /// 配送状況に応じたアイコン
   IconData _statusIcon(String status) {
     final s = status;
-    if (s.contains('配達完了') || s.contains('お届け済み') || s.contains('投函完了')) {
+    // 配達完了はドメインの共通判定に委譲する（「配達済み」「お届け完了」も含む）
+    if (isDeliveredStatus(s)) {
       return Icons.check_circle;
     }
     if (s.contains('持ち出し中') || s.contains('配達中')) {
@@ -88,7 +91,11 @@ class TrackingCard extends StatelessWidget {
   }
 
   /// 最終更新が48時間（2日）以上前かどうか
+  ///
+  /// 配達完了済みは自動更新の対象外（意図的に更新しない）ため、
+  /// 停滞警告の対象から除外する（誤って「2日以上更新なし」と表示しない）。
   bool get _isStale =>
+      !isDeliveredStatus(info.currentStatus) &&
       info.lastUpdated != null &&
       DateTime.now().difference(info.lastUpdated!).inHours >= 48;
 

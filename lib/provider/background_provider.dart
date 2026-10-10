@@ -1,21 +1,17 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:trackflow/core/constants/settings_keys.dart';
 import 'package:trackflow/data/local/database.dart';
 import 'package:trackflow/data/scraping/carrier_tracker.dart';
 import 'package:trackflow/domain/entities/carrier.dart';
+import 'package:trackflow/domain/tracking_status.dart';
 import 'widget_snapshot_provider.dart';
 
 const _backgroundTaskName = 'trackflow_background_fetch';
 const _periodicTaskName = 'trackflow_periodic';
-
-/// 設定キー（callbackDispatcherで直接SharedPreferencesを読むため定数化）
-const _keyNotifyDelivery = 'notify_delivery';
-const _keyNotifyStatusChange = 'notify_status_change';
-const _keyNotifyDeliveryDay = 'delivery_day_notify';
 
 /// 配達予定日当日の通知済み記録キーのプレフィックス
 /// `delivery_day_notified_<追跡番号>` = `YYYY/MM/DD`（同一日は再通知しない）
@@ -121,33 +117,40 @@ void callbackDispatcher() {
 
       // 通知設定をSharedPreferencesから読み取る
       final prefs = await SharedPreferences.getInstance();
-      final notifyDelivery = prefs.getBool(_keyNotifyDelivery) ?? true;
-      final notifyStatusChange = prefs.getBool(_keyNotifyStatusChange) ?? false;
-      final notifyDeliveryDay = prefs.getBool(_keyNotifyDeliveryDay) ?? true;
+      final notifyDelivery =
+          prefs.getBool(SettingsKeys.notifyDelivery) ?? true;
+      final notifyStatusChange =
+          prefs.getBool(SettingsKeys.notifyStatusChange) ?? false;
+      final notifyDeliveryDay =
+          prefs.getBool(SettingsKeys.deliveryDayNotify) ?? true;
 
       // 通知チャンネルを確実に作成（バックグラウンドIsolateでも必要）
       await initNotificationChannels();
 
       for (final item in saved) {
         try {
+          final prevHistory =
+              await db.getLatestHistory(item.trackingNumber, item.carrier);
+
+          // 配達完了済みの荷物は自動更新しない（各社への再取得・スクレイピングを
+          // 行わない）。最新キャッシュのステータスが配達完了を示す場合のみスキップ
+          // するため、同一番号が再び輸送中になっても自動で取得を再開できる。
+          if (!shouldAutoUpdate(prevHistory?.currentStatus)) {
+            continue;
+          }
+
           final tracker = TrackerFactory.create(
               Carrier.fromString(item.carrier));
           final info = await tracker.fetch(item.trackingNumber);
 
-          final prevHistory =
-              await db.getLatestHistory(item.trackingNumber, item.carrier);
-
-          final historyId = await db.saveHistory(
+          // 履歴とイベントを1トランザクションで保存する
+          await db.saveHistoryWithEvents(
             item.trackingNumber,
             item.carrier,
             itemType: info.itemType,
             currentStatus: info.currentStatus,
             estimatedDelivery: info.estimatedDelivery,
-          );
-
-          await db.saveEvents(
-            historyId,
-            info.events
+            events: info.events
                 .map((e) => (
                       rawDate: e.rawDate,
                       status: e.status,
@@ -311,20 +314,19 @@ Future<void> _showDeliveryDayNotification(
   }
 }
 
-final backgroundProvider = Provider<void>((ref) {});
-
-/// ステータス文字列が配達完了を示すかどうかを判定する。
-/// 各社の配達完了表現を網羅する。
-/// 一覧画面の絞り込み・自動アーカイブからも使用するため公開関数とする。
-bool isDeliveredStatus(String status) {
-  final deliveredKeywords = [
-    '配達完了', // ヤマト・佐川
-    'お届け済み', // 日本郵便
-    '投函完了', // 日本郵便（ポスト投函）
-    '配達済み', // 佐川
-    'お届け完了', // 佐川
-  ];
-  return deliveredKeywords.any(status.contains);
+/// 追跡を自動更新（定期取得）すべきかどうかを判定する。
+///
+/// 最新キャッシュのステータスが配達完了を示す場合は `false` を返し、
+/// バックグラウンドの定期取得および各社サイトへの再アクセスをスキップする。
+/// 履歴が存在しない（`null`）場合は初回取得のため `true` を返す。
+///
+/// 判定はキャッシュ済みステータスのみを根拠とするため、配達完了後に
+/// ステータスが再び変化していた場合でも、次回フォアグラウンドで手動更新
+/// された結果がキャッシュに反映されれば自動更新が再開される。
+@visibleForTesting
+bool shouldAutoUpdate(String? lastKnownStatus) {
+  if (lastKnownStatus == null) return true;
+  return !isDeliveredStatus(lastKnownStatus);
 }
 
 /// 配達予定日文字列が「今日」の日付かどうかを判定する。
@@ -400,7 +402,8 @@ Future<void> initBackgroundService() async {
 
     // 保存された更新間隔を読み取る
     final prefs = await SharedPreferences.getInstance();
-    final interval = prefs.getString('update_interval') ?? '30分';
+    final interval =
+        prefs.getString(SettingsKeys.updateInterval) ?? '30分';
     final frequency = intervalToDuration(interval);
 
     await Workmanager().registerPeriodicTask(

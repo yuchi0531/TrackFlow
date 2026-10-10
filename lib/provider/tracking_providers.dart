@@ -103,8 +103,12 @@ class TrackingListNotifier extends AsyncNotifier<List<TrackingInfo>> {
   }
 }
 
-final trackingDetailProvider =
-    FutureProvider.family<TrackingInfo, ({String number, String carrier})>(
+/// 詳細画面の追跡情報を取得する。
+///
+/// `.autoDispose` により、詳細画面を閉じると状態が破棄される。これにより
+/// 再度同じ追跡を開いた際に必ず最新を取り直す（前回値のキャッシュ固定を防ぐ）。
+final trackingDetailProvider = FutureProvider.autoDispose
+    .family<TrackingInfo, ({String number, String carrier})>(
   (ref, params) async {
     final repo = await ref.watch(trackingRepositoryProvider.future);
     return repo.fetchTracking(
@@ -146,5 +150,48 @@ final addTrackingProvider = Provider<Future<void> Function({
     );
 
     await db.insertTracking(trackingNumber, carrier, nickname: nickname);
+  };
+});
+
+/// 配送会社を自動判定して追跡を追加する。
+///
+/// 桁数から候補を絞り、各社へ順に問い合わせて最初に取得できた会社で登録する。
+/// 取得できた会社（[Carrier]）を返す。どの会社でも取得できなかった場合は
+/// 例外を投げず null を返す（候補が存在しない、または全社で見つからない場合）。
+///
+/// 登録済み判定は判定した会社に対して行う。番号そのものが既に別の会社で
+/// 登録済みでも、自動判定では気づけない可能性がある点に注意。
+final addTrackingAutoProvider = Provider<
+    Future<Carrier?> Function({
+      required String trackingNumber,
+      String? nickname,
+    })>((ref) {
+  return ({
+    required String trackingNumber,
+    String? nickname,
+  }) async {
+    trackingNumber = TrackingNumberValidator.normalize(trackingNumber);
+
+    final db = await ref.read(databaseProvider.future);
+    // 自動判定では会社が未確定のため、どの会社で登録済みでも重複とみなす
+    // （判定結果と別会社で既登録のケースを取りこぼさない）。
+    for (final carrier in Carrier.values) {
+      final existing =
+          await db.findByTrackingNumber(trackingNumber, carrier.name);
+      if (existing != null) {
+        throw Exception('この追跡番号は既に登録されています');
+      }
+    }
+
+    final repo = await ref.read(trackingRepositoryProvider.future);
+    final detected = await repo.detectCarrierAndFetch(trackingNumber);
+    if (detected == null) return null;
+
+    await db.insertTracking(
+      trackingNumber,
+      detected.carrier.name,
+      nickname: nickname,
+    );
+    return detected.carrier;
   };
 });

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:trackflow/domain/entities/carrier.dart';
 import 'package:trackflow/presentation/add_tracking/add_tracking_page.dart';
 import 'package:trackflow/provider/tracking_providers.dart';
 
@@ -142,6 +143,87 @@ void main() {
       );
       expect(
         find.textContaining('追跡番号の形式が正しくありません（10〜14桁）'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('配送会社未選択（既定の自動判定）なら自動判定プロバイダが使われる', (tester) async {
+      final added = <String>[];
+      final router = buildRouter(
+        ({
+          required String trackingNumber,
+          required String carrier,
+          String? nickname,
+        }) async {
+          fail('明示選択プロバイダは呼ばれないはず');
+        },
+      );
+
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          // 既定は自動判定のため、こちらが呼ばれる
+          addTrackingAutoProvider.overrideWith((ref) {
+            return ({
+              required String trackingNumber,
+              String? nickname,
+            }) async {
+              added.add(trackingNumber);
+              return Carrier.yamato;
+            };
+          }),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ));
+
+      await openAddPage(tester);
+
+      // 配送会社を選ばず番号だけ入力して開始
+      await tester.enterText(
+        find.byType(TextField).first,
+        '123456789012\n123456789013',
+      );
+      await tester.pump();
+      await tester.tap(find.text('追跡を開始'));
+      await tester.pumpAndSettle();
+
+      expect(added, ['123456789012', '123456789013']);
+      expect(find.text('追加画面を開く'), findsOneWidget);
+      expect(find.textContaining('2件すべて登録しました'), findsOneWidget);
+    });
+
+    testWidgets('自動判定で全件判定不能なら失敗表示され画面に留まる', (tester) async {
+      final router = buildRouter(
+        ({
+          required String trackingNumber,
+          required String carrier,
+          String? nickname,
+        }) async {
+          fail('明示選択プロバイダは呼ばれないはず');
+        },
+      );
+
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          addTrackingAutoProvider.overrideWith((ref) {
+            return ({
+              required String trackingNumber,
+              String? nickname,
+            }) async =>
+                null; // どの会社でも見つからない
+          }),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ));
+
+      await openAddPage(tester);
+      await tester.enterText(find.byType(TextField).first, '123456789012');
+      await tester.pump();
+      await tester.tap(find.text('追跡を開始'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('追跡を追加'), findsOneWidget);
+      expect(
+        find.textContaining('配送会社を自動判定できませんでした'),
         findsOneWidget,
       );
     });
