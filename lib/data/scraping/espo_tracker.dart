@@ -29,9 +29,16 @@ class EspoTracker implements CarrierTracker {
               'Content-Type': 'application/json',
               'User-Agent': CarrierUrls.userAgent,
               'Origin': 'https://www.console.espoirer.com',
+              'Referer': CarrierUrls.espoWebTrackingUrl,
             },
+            // 実ブラウザ（axios の transformRequest）は `data` でラップして送る。
+            // ラップせずに `{"hawbNoList":[...]}` を送ると、実 API は
+            // HTTP 200 / errcode 0 のまま `result: []` を返して追跡できない。
+            // 実 API が受け付けるのはこのラップ形式のみ。
             body: jsonEncode({
-              'hawbNoList': [trackingNumber],
+              'data': {
+                'hawbNoList': [trackingNumber],
+              },
             }),
           )
           .timeout(const Duration(seconds: 15));
@@ -158,10 +165,19 @@ class EspoTracker implements CarrierTracker {
       if (parsed == null) continue;
       final date = parsed.toLocal();
 
+      // 実 API の `orderStatus` には日本語のステータスが直接入っている
+      // （"集荷" / "持ち出し" / "配送完了" など）ため、こちらを優先する。
+      // 空/null のときだけコードから文言を引く。
+      final orderStatus = entry['orderStatus'];
+      final status =
+          orderStatus is String && orderStatus.trim().isNotEmpty
+          ? orderStatus
+          : _statusLabel(type);
+
       events.add(
         _DatedEvent(
           date: date,
-          status: _statusLabel(type),
+          status: status,
           index: i,
         ),
       );
@@ -221,9 +237,40 @@ class EspoTracker implements CarrierTracker {
 
   /// エスポ便のステータスコード → 日本語文言
   ///
-  /// 追跡ページの ja-JP ロケール定義
-  /// （`expressTrackingPage.content.otherDelivery.status.<code>`）に準拠する。
+  /// 実 API は **5000番台**のコードを返す（`select.option.*` の ja-JP ロケールと
+  /// 実レスポンスから確定した 5001〜5031 の27種）。3桁コード（101〜534）は
+  /// 旧形式／将来用として保持する。
+  /// 未登録コードは `確認中（コード: N）` にフォールバックする。
   static const Map<int, String> _statusLabels = {
+    // 実 API が返す 5000番台（現行形式）
+    5001: '集荷',
+    5002: '配達中',
+    5003: '持ち出し',
+    5006: 'ESPに返品',
+    5007: '配達完了',
+    5008: '配達失敗',
+    5010: '返品完了',
+    5011: '廃棄',
+    5012: 'ESPに返品',
+    5013: '配達失敗',
+    5014: '配達失敗',
+    5015: '配達失敗',
+    5016: '配達失敗',
+    5017: '持ち戻り',
+    5018: '配達失敗',
+    5019: '配達失敗',
+    5020: '配達失敗',
+    5021: '発送元へ返送済み',
+    5022: '発送元へ返送開始',
+    5023: '輸送中',
+    5024: '営業所に返品',
+    5025: '配達失敗',
+    5027: '積込失敗-サイズオーバー',
+    5028: '積込失敗-危険品',
+    5029: '積込失敗-不在',
+    5030: '積込失敗-当日キャンセル',
+    5031: '積込失敗-その他',
+    // 3桁コード（旧形式・将来用）
     // 自社配送（国内）
     101: '集荷',
     102: '輸送中',

@@ -387,6 +387,10 @@ void main() {
       expect(isDeliveredStatus('配達完了【宅配BOX】'), isTrue);
     });
 
+    test('エスポ便の orderStatus「配送完了」も配達完了扱い', () {
+      expect(isDeliveredStatus('配送完了'), isTrue);
+    });
+
     test('返品完了は配達完了ではない', () {
       expect(isDeliveredStatus('返品完了'), isFalse);
     });

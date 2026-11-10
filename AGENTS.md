@@ -15,7 +15,7 @@ export PATH=$HOME/flutter/bin:$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH
 
 flutter pub get
 flutter pub run build_runner build --delete-conflicting-outputs  # Drift ORMコード生成
-flutter test                                                      # 単体テスト 183件
+flutter test                                                      # 単体テスト 190件
 flutter build apk --release                                       # リリースAPK (~32.8MB)
 ```
 
@@ -25,7 +25,7 @@ Flutter SDK パス: `/home/yuchi0531/flutter`
 
 ```bash
 dart analyze lib/     # No issues found が必須
-flutter test          # 全183件パス（DBはインメモリ、ネットワーク不要）
+flutter test          # 全190件パス（DBはインメモリ、ネットワーク不要）
 flutter build apk --release  # リリースビルド確認
 ```
 
@@ -109,7 +109,7 @@ lib/
 - **通知IDは追跡番号からハッシュ安定生成**: `notificationIdFor(number)`（**FNV-1a 32bit を自前実装** → `& 0x7FFFFFFF` → `% 2000000000 + 1`）。Dart の `String.hashCode` はプロセスをまたぐ同一性が保証されないため、workmanager の別プロセス起動でも同一IDになるよう自前実装。Android の NotificationManager は32bit intのためビットマスク必須
 - **通知チャンネル2種**: `delivery_channel`(配達完了, Importance.high) / `status_channel`(ステータス変更, default)。callbackDispatcher内でも作成必須
 - **設定キーは `lib/core/constants/settings_keys.dart` の `SettingsKeys` に一本化**: `notify_delivery`, `notify_status_change`, `delivery_day_notify`, `update_interval`。UI Provider と callbackDispatcher の双方が同一定数を参照（文字列のずれ防止）。背景IsolateはProviderを読めないため callbackDispatcher は `SharedPreferences.getInstance()` を直接読む
-- **配達完了判定**: `isDeliveredStatus()`（`lib/domain/tracking_status.dart`）が「配達完了/お届け済み/投函完了/配達済み/お届け完了/引渡完了」の6キーワードで判定（各社表現が異なるため文字列contains）。エスポ便の `引渡完了` を含む。`返品完了` は配達完了ではないため「完了」だけでは判定しない
+- **配達完了判定**: `isDeliveredStatus()`（`lib/domain/tracking_status.dart`）が「配達完了/配送完了/お届け済み/投函完了/配達済み/お届け完了/引渡完了」の**7キーワード**で判定（各社表現が異なるため文字列contains）。エスポ便の `引渡完了` を含む。**エスポ便の実 API は `orderStatus` に「配送完了」と表現する**（`配達完了` ではない）ため `配送完了` を追加した。`返品完了` は配達完了ではないため「完了」だけでは判定しない
 - **配達完了済みは自動更新しない (v0.0.7)**: callbackDispatcher のループ先頭で `shouldAutoUpdate(prevHistory?.currentStatus)` を判定し、最新キャッシュが配達完了ステータスなら `continue` して各社への再取得（スクレイピング）と通知をスキップ。履歴なし（null）は初回取得のため更新する。判定はキャッシュ済みステータスのみを根拠とするため、再び輸送中に変化した場合は手動更新後のキャッシュ反映で自動更新が再開される。`shouldAutoUpdate()` は公開・`@visibleForTesting`
 - **配達予定日当日通知 (v0.0.6)**: 設定キー `delivery_day_notify`（デフォルト true）。**zonedSchedule は不使用・timezone パッケージ追加なし**。callbackDispatcher 内で `isDeliveryToday(estimatedDelivery)` 判定（`YYYY/MM/DD` 優先、年なし `M/D` は現在年仮定+未来なら年を1つ戻す）。**1日1回制御**: `delivery_day_notified_<追跡番号>` = `YYYY/MM/DD` を保存し、同一日は再通知しない。配達完了済みは通知しない。チャンネルは status_channel 再利用、通知IDは notificationIdFor
 - **更新間隔**: `'15分'|'30分'|'1時間'|'3時間'` を `intervalToDuration()` でDuration変換。設定変更時は `updateBackgroundTaskInterval()` で cancel→再登録
@@ -144,13 +144,13 @@ lib/
 | 日本郵便 | GET | `https://trackings.post.japanpost.jp/services/srv/search/direct` ?`reqCodeNo1=XXX&searchKind=S004&locale=ja` |
 | ヤマト運輸 | POST | `https://toi.kuronekoyamato.co.jp/cgi-bin/tneko` (body: `number00=1&number01=XXX`) |
 | 佐川急便 | POST | `https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do` (body: `okurijoNo=XXX`) |
-| エスポ便 | POST(JSON) | `https://www.console.espoirer.com/prod/other/status` (body: `{"hawbNoList":["E10098595043"]}`, `Content-Type: application/json`, **認証不要**) |
+| エスポ便 | POST(JSON) | `https://www.console.espoirer.com/prod/other/status` (body: `{"data":{"hawbNoList":["E10098595043"]}}`, `Content-Type: application/json`, **認証不要**) |
 
 - 全トラッカー共通: **15秒タイムアウト**、User-Agent は `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15`
 - ヤマト: JS組立てページ → `swd.writeln('...')` 正規表現抽出 → `\<`→`<`, `\>`→`>`, `\/`→`/` エスケープ解除 → DOCTYPE/html/head/body/title/style/script/コメント削除
 - 佐川: ステータス装飾文字（`↓⇒\u3000`）trim、配達予定日は `配達予定日` ラベル以降の文字列を抽出
 - 日本郵便: `table.tableType01` が2つ必要（1つ目=商品種別、2つ目=履歴）。無ければ notFound
-- **エスポ便**: 追跡ページは React SPA で HTML スクレイピング不可。ページが内部で叩く `POST /prod/other/status`（認証不要）を直接利用する。`result` が空配列/ null なら notFound。`orderTrackVoList` から `orderTrackType != 5` を除外し `createTime` 昇順でイベント化、`currentStatus` は最後のイベントのステータス。`createTime` は ISO8601 と `yyyy-MM-dd HH:mm:ss` の両対応（`DateTime.tryParse`）。日付不正・イベント0件は notFound。**イベントが空の場合に実APIは 901/902 等の推定コードを返す設計だが、本アプリは表示できないため notFound として簡略化**（`espo_tracker.dart` に理由コメントあり）。ステータスコード→日本語は `_statusLabels`（101〜124 / 201〜274 / 301〜366 / 401〜434 / 501〜534 / 901〜902 を網羅、未登録は `確認中（コード: N）`）
+- **エスポ便**: 追跡ページは React SPA で HTML スクレイピング不可。ページが内部で叩く `POST /prod/other/status`（認証不要）を直接利用する。**リクエストは `{"data":{"hawbNoList":[...]}}` と `data` でラップする（ラップしないと HTTP 200 / errcode 0 のまま `result: []` が返り追跡できない。実ブラウザは axios の transformRequest がラップしている）。レスポンスはラップされておらず `result` はルート直下**。`result` が空配列/ null なら notFound。存在しない番号でも `result` に全フィールド null の要素が1件入り `orderTrackVoList` が null になるため、これも notFound。`orderTrackVoList` から `orderTrackType != 5` を除外し `createTime` 昇順でイベント化、`currentStatus` は最後のイベントのステータス。**`orderStatus` に日本語が直接入っているため非null・非空ならそれを優先し、空/null のときだけコードから文言を引く**。`createTime` は ISO8601 と `yyyy-MM-dd HH:mm:ss` の両対応（`DateTime.tryParse`）。日付不正・イベント0件は notFound。**イベントが空の場合に実APIは 901/902 等の推定コードを返す設計だが、本アプリは表示できないため notFound として簡略化**（`espo_tracker.dart` に理由コメントあり）。ステータスコード→日本語は `_statusLabels`（**実際は 5000番台（5001〜5031、27種）が返る**。3桁コード 101〜534 は旧形式／将来用として保持。未登録は `確認中（コード: N）`）
 - 日付パース: ヤマト/佐川は現在年を仮定し、**未来日時は年を1つ戻す**（年跨ぎ対応）。日本郵便は `YYYY/MM/DD HH:MM` 形式。エスポ便は `DateTime.tryParse` に委譲
 - **追跡番号バリデーション**: `isValid()` は数字のみ10〜14桁に加え、エスポ便の `E`+11桁（大小文字不問）を許可。`normalize()` はハイフン・空白除去に加え**大文字化**する（`e10098595043` → `E10098595043`）
 - **追跡番号自動判定は UI 未使用**: `detectCarrier()` はエスポ便形式 → espo、11桁/13桁 → 日本郵便、12桁 → ヤマト（**佐川も12桁なので判別不能 → 佐川は手動選択必須**）。有効桁数は10-14桁。UIからは削除済みでテスト用に残置

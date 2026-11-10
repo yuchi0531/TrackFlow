@@ -17,7 +17,8 @@ class CarrierUrls {
   /// エスポ便（ESPエクスプレス） 追跡API（スクレイピング用）
   ///
   /// 追跡ページは React SPA のため HTML を取得できない。ページが内部で叩く
-  /// JSON API（`{"hawbNoList": ["<番号>"]}` を POST、認証不要）を直接利用する。
+  /// JSON API（`{"data":{"hawbNoList":["<番号>"]}}` を POST、認証不要）を
+  /// 直接利用する。**`data` ラップは必須**（ラップしないと `result: []` になる）。
   static const espoTrackingUrl =
       'https://www.console.espoirer.com/prod/other/status';
 
