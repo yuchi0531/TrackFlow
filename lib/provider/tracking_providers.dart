@@ -77,6 +77,12 @@ class TrackingListNotifier extends AsyncNotifier<List<TrackingInfo>> {
 
   /// 追跡を削除する。DB削除前に state から即時除去して、
   /// 削除したアイテムが一瞬戻るフリッカーを防ぐ。
+  ///
+  /// DB削除に失敗した場合（レガシー重複による StateError、SQLITE_BUSY 等）は
+  /// 除去したアイテムを元の位置へ戻してから例外を投げ直す。UI だけ消えて
+  /// DB に残る（一覧から永久に消える）状態を防ぐため。
+  /// なお削除中に refresh で state が AsyncLoading/AsyncError になった場合は、
+  /// 復元せず `build()` の再実行に任せる（[delete] の実装コメント参照）。
   Future<void> delete({
     required String trackingNumber,
     required String carrier,
@@ -84,18 +90,67 @@ class TrackingListNotifier extends AsyncNotifier<List<TrackingInfo>> {
     // 一覧の表示値は正規化済みだが、防御的に正規化してから検索する
     // （レガシーのハイフン付き保存値でも検索にヒットする）
     trackingNumber = TrackingNumberValidator.normalize(trackingNumber);
+
+    // 削除前のスナップショット。ロールバック時の復元元はこの控えを使う
+    // （await 中に state が AsyncLoading になっても復元結果が壊れない）
     final current = state.value;
+
+    // 照合は正規化して行う。`getAllActive()` の生値はレガシー行だと
+    // ハイフン付きのままなので、単純比較では除去対象を取りこぼし
+    // 「state に残ったまま DB からだけ消える」状態になる。
+    bool isTarget(TrackingInfo t) {
+      final normalized = TrackingNumberValidator.normalize(t.trackingNumber);
+      return normalized == trackingNumber && t.carrier.name == carrier;
+    }
+
+    // 復元用に、除去するアイテムと元の位置を控えておく
+    var removedIndex = -1;
+    TrackingInfo? removed;
     if (current != null) {
-      state = AsyncData(current
-          .where((t) =>
-              t.trackingNumber != trackingNumber || t.carrier.name != carrier)
-          .toList());
+      final index = current.indexWhere(isTarget);
+      if (index >= 0) {
+        removedIndex = index;
+        removed = current[index];
+      }
+      state = AsyncData(current.where((t) => !isTarget(t)).toList());
     }
 
     final db = await ref.read(databaseProvider.future);
-    final saved = await db.findByTrackingNumber(trackingNumber, carrier);
-    if (saved != null) {
-      await db.deleteTracking(saved.id);
+    try {
+      final saved = await db.findByTrackingNumber(trackingNumber, carrier);
+      if (saved != null) {
+        await db.deleteTracking(saved.id);
+      }
+    } catch (_) {
+      // DB削除に失敗したので、一覧から消えたアイテムを元の位置へ戻す。
+      // 復元元は削除前に控えた `current` を使う（state を読み直さない）。
+      // delete の await 中に pull-to-refresh などで state が AsyncLoading に
+      // なると `state.value` は null になり、そこから復元すると removed 1件
+      // だけのリストで他を全消失させるため。読み直しをやめることで、
+      // 途中で refresh が挟まっても全件消失しない。
+      if (removed != null) {
+        // 表示中のデータがある場合のみ復元する。AsyncLoading/AsyncError 中は
+        // 古いスナップショットで上書きせず、build() を再実行させて DB が
+        // 真実を持つ状態に戻す。
+        if (state is AsyncData<List<TrackingInfo>>) {
+          final restored = [...current!];
+          // `current` は削除前のスナップショットなので通常は removed を既に
+          // 含む。何らかの経路で欠けていた場合に備え、含まれない時だけ
+          // 元の位置へ戻す（二重挿入の防止）。
+          if (!restored.any(isTarget)) {
+            // 復元位置は clamp する
+            // （他経路で state が縮んでいても範囲外挿入しない）
+            restored.insert(
+              removedIndex.clamp(0, restored.length).toInt(),
+              removed,
+            );
+          }
+          state = AsyncData(restored);
+        } else {
+          ref.invalidateSelf();
+        }
+      }
+      rethrow;
     }
 
     // 削除後にウィジェット用スナップショットを非同期で更新（fire-and-forget）

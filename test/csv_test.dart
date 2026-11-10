@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:trackflow/data/csv/csv_export.dart';
@@ -85,6 +87,28 @@ void main() {
       expect(csv, contains('"本, 母"'));
       // 改行を含む値は引用符で囲まれる（1フィールドとして扱われる）
       expect(csv, contains('"配達中\n明日到着「重要」"'));
+    });
+  });
+
+  group('encodeTrackingsCsvBytes', () {
+    test('先頭に UTF-8 BOM が付与される', () {
+      final bytes = encodeTrackingsCsvBytes('a,b\n1,2\n');
+
+      expect(bytes.take(3).toList(), [0xEF, 0xBB, 0xBF]);
+      // BOM を除いた本体は元の CSV と等しい
+      expect(utf8.decode(bytes.skip(3).toList()), 'a,b\n1,2\n');
+    });
+
+    test('BOM 付きでもパースできる（ラウンドトリップ）', () {
+      final csv = buildTrackingsCsv([
+        _saved(id: 1, number: '12345678901', carrier: 'yamato', nickname: '本'),
+      ], const {});
+      final bytes = encodeTrackingsCsvBytes(csv);
+
+      final records = parseTrackingsCsv(utf8.decode(bytes));
+      expect(records, hasLength(1));
+      expect(records.single.trackingNumber, '12345678901');
+      expect(records.single.nickname, '本');
     });
   });
 

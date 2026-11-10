@@ -2,20 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:trackflow/domain/entities/tracking_event.dart';
 
 class TrackingTimeline extends StatelessWidget {
+  /// 追跡イベント（`TrackingInfo.events` の契約どおり**古い順**で保持されている）。
   final List<TrackingEvent> events;
+
   const TrackingTimeline({super.key, required this.events});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // events は古い順で保持されているが、表示は新しい順（最新が先頭）。
+    // ヘッダーの currentStatus は events.last.status なので、
+    // 先頭＝最新を強調することでヘッダーと一致させる。
+    final ordered = events.reversed.toList(growable: false);
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: events.length,
+      itemCount: ordered.length,
       itemBuilder: (context, index) {
-        final event = events[index];
-        final isFirst = index == 0;
-        final isLast = index == events.length - 1;
+        final event = ordered[index];
+        final isLatest = index == 0;
+        final isLast = index == ordered.length - 1;
         return IntrinsicHeight(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -29,7 +35,7 @@ class TrackingTimeline extends StatelessWidget {
                       height: 12,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: isFirst
+                        color: isLatest
                             ? theme.colorScheme.primary
                             : theme.colorScheme.outline,
                       ),
@@ -54,8 +60,9 @@ class TrackingTimeline extends StatelessWidget {
                       Text(
                         event.status,
                         style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: isFirst ? FontWeight.bold : FontWeight.normal,
-                          color: isFirst
+                          fontWeight:
+                              isLatest ? FontWeight.bold : FontWeight.normal,
+                          color: isLatest
                               ? theme.colorScheme.primary
                               : theme.colorScheme.onSurface,
                         ),

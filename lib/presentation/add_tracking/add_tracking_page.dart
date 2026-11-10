@@ -37,6 +37,10 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
   Future<void> _submit() async {
     if (_isSubmitting) return;
 
+    // 送信中に画面を閉じられても一覧へ反映できるよう、invalidate 用の
+    // コンテナは mounted 判定より前に取得しておく。
+    final container = ProviderScope.containerOf(context, listen: false);
+
     // 追跡番号そのもの、または各社の追跡URLを受け付ける（区切りは既存どおり）
     final tokens = splitTrackingTokens(_numberController.text);
     if (tokens.isEmpty) return;
@@ -120,20 +124,27 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
         }
       }
 
-      // 形式エラーでスキップした分も失敗として合算する
-      if (invalidCount > 0) {
+      // 形式エラーでスキップした分も失敗として合算する。
+      // 件数分だけ積む（1件に丸めると「無効2件＋成功1件」が
+      // 「1件成功、1件失敗」と誤って表示される）。
+      for (var i = 0; i < invalidCount; i++) {
         failures.insert(0, '追跡番号またはURLを認識できませんでした');
       }
 
       final summary = buildAddResultSummary(successCount, failures);
+
+      // 登録に成功したら一覧を更新する。送信中に画面を戻られても反映されるよう
+      // mounted 判定の外で invalidate する（登録自体は既に完了しているため）。
+      if (successCount > 0) {
+        container.invalidate(trackingListProvider);
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(summary)),
         );
         if (successCount > 0) {
-          // 成功が1件以上なら一覧へ反映して戻る
-          ref.invalidate(trackingListProvider);
+          // 成功が1件以上なら一覧へ戻る
           context.pop();
         }
       }
@@ -174,53 +185,62 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
       appBar: AppBar(
         title: const Text('追跡を追加'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _numberController,
-              keyboardType: TextInputType.text,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                hintText: '1234-5678-9012 または 追跡URL',
-                labelText: '追跡番号 / URL',
-                helperText: '追跡番号または各社の追跡URL（複数は改行・カンマ区切り）',
+      body: SafeArea(
+        // キーボード表示時（小型端末・横向き・大きめフォント）でも
+        // 入力欄へスクロールで到達できるようにする。
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: _numberController,
+                keyboardType: TextInputType.text,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  hintText: '1234-5678-9012 または 追跡URL',
+                  labelText: '追跡番号 / URL',
+                  helperText: '追跡番号または各社の追跡URL（複数は改行・カンマ区切り）',
+                ),
               ),
-            ),
-            const SizedBox(height: 24),
-            Text('配送会社', style: theme.textTheme.titleSmall),
-            const SizedBox(height: 8),
-            CarrierSelector(
-              selectedCarrier: _selectedCarrier,
-              onSelected: (carrier) {
-                setState(() => _selectedCarrier = carrier);
-              },
-            ),
-            const SizedBox(height: 24),
-            TextField(
-              controller: _nicknameController,
-              decoration: const InputDecoration(
-                hintText: 'Amazonの注文',
-                labelText: 'ニックネーム（任意）',
+              const SizedBox(height: 24),
+              Text('配送会社', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              CarrierSelector(
+                selectedCarrier: _selectedCarrier,
+                onSelected: (carrier) {
+                  setState(() => _selectedCarrier = carrier);
+                },
               ),
-            ),
-            const Spacer(),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: canSubmit ? _submit : null,
-                child: _isSubmitting
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('追跡を開始'),
+              const SizedBox(height: 24),
+              TextField(
+                controller: _nicknameController,
+                decoration: const InputDecoration(
+                  hintText: 'Amazonの注文',
+                  labelText: 'ニックネーム（任意）',
+                ),
               ),
+            ],
+          ),
+        ),
+      ),
+      // ボタンはスクロール領域の外に固定し、キーボード表示時も常に押せるようにする
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: canSubmit ? _submit : null,
+              child: _isSubmitting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('追跡を開始'),
             ),
-          ],
+          ),
         ),
       ),
     );

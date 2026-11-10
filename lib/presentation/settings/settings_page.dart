@@ -183,7 +183,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         fileName: 'trackflow_${_dateStamp(now)}.csv',
         type: FileType.custom,
         allowedExtensions: ['csv'],
-        bytes: utf8.encode(csv),
+        bytes: encodeTrackingsCsvBytes(csv),
       );
       if (path == null) return; // キャンセル
 
@@ -247,6 +247,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           content: Text(
             '$imported件インポートしました（重複・無効 '
             '${duplicates + invalidCount}件スキップ）',
+          ),
+        ),
+      );
+    } on FormatException {
+      // UTF-8 として解釈できない（Shift_JIS など）ファイルを選んだケース
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'CSVの文字コードを認識できませんでした。'
+            'UTF-8で保存したCSVを選択してください',
           ),
         ),
       );

@@ -20,6 +20,13 @@ class TrackingListPage extends ConsumerStatefulWidget {
 class _TrackingListPageState extends ConsumerState<TrackingListPage> {
   _SortBy _sortBy = _SortBy.registration;
 
+  /// 削除失敗時に Dismissible を作り直すための世代番号。
+  ///
+  /// dismiss 済みの Dismissible は同じ key のままツリーへ戻ると
+  /// 「A dismissed Dismissible widget is still part of the tree」で落ちるため、
+  /// 削除に失敗してアイテムを一覧へ復元する際はキーを変えて再生成する。
+  int _dismissGeneration = 0;
+
   /// 並び替えを適用した新しいリストを返す。
   ///
   /// 登録順は Provider の並び（createdAt 降順）をそのまま使う。
@@ -132,22 +139,42 @@ class _TrackingListPageState extends ConsumerState<TrackingListPage> {
   }
 
   Widget _buildCard(TrackingInfo info) {
+    final baseKey = '${info.trackingNumber}_${info.carrier.name}';
     return Padding(
+      // セクション（配達中／終了済）をまたいで移動した際に、Dismissible が
+      // 別アイテムの要素を再利用しないよう一意なキーを付ける。
+      key: ValueKey('card_$baseKey'),
       padding: const EdgeInsets.only(bottom: 8),
       child: Dismissible(
-        key: ValueKey('${info.trackingNumber}_${info.carrier.name}'),
+        // 削除失敗時は世代番号を進めて、dismiss 済みの Dismissible を作り直す
+        // （同じ key のままツリーへ戻すとアサーションで落ちるため）
+        key: ValueKey('${baseKey}_$_dismissGeneration'),
         direction: DismissDirection.endToStart,
         dismissThresholds: const {DismissDirection.endToStart: 0.4},
         confirmDismiss: (_) => _confirmDismiss(info),
         onDismissed: (_) async {
-          // NotifierのdeleteでDB削除前に state から即時除去するため、
-          // 削除済みアイテムが一瞬戻る（Dismissibleアサーション）のを防ぐ。
-          await ref
-              .read(trackingListProvider.notifier)
-              .delete(
-                trackingNumber: info.trackingNumber,
-                carrier: info.carrier.name,
-              );
+          // 削除失敗時に SnackBar を出すため、await 前に取得しておく
+          // （失敗時は state が復元され、この要素は破棄されうる）
+          final messenger = ScaffoldMessenger.of(context);
+          try {
+            // NotifierのdeleteでDB削除前に state から即時除去するため、
+            // 削除済みアイテムが一瞬戻る（Dismissibleアサーション）のを防ぐ。
+            await ref.read(trackingListProvider.notifier).delete(
+                  trackingNumber: info.trackingNumber,
+                  carrier: info.carrier.name,
+                );
+          } catch (_) {
+            // Notifier側で state は復元済み。dismiss 済みの Dismissible を
+            // そのまま戻すとアサーションで落ちるため、キーを変えて作り直す。
+            if (mounted) {
+              setState(() => _dismissGeneration++);
+            }
+            messenger.showSnackBar(
+              const SnackBar(
+                content: Text('削除に失敗しました。通信状況を確認して再度お試しください'),
+              ),
+            );
+          }
         },
         background: _buildDeleteBackground(),
         secondaryBackground: _buildDeleteBackground(),
@@ -189,7 +216,25 @@ class _TrackingListPageState extends ConsumerState<TrackingListPage> {
       body: trackingsAsync.when(
         data: (trackings) {
           if (trackings.isEmpty) {
-            return const EmptyState();
+            // 空一覧でも pull-to-refresh できるよう RefreshIndicator で包む。
+            // EmptyState はスクロール可能な領域の中央に置く。
+            return RefreshIndicator(
+              onRefresh: () async {
+                // ignore: unused_result
+                await ref.refresh(trackingListProvider.future);
+              },
+              child: LayoutBuilder(
+                builder: (context, constraints) => SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                    ),
+                    child: const EmptyState(),
+                  ),
+                ),
+              ),
+            );
           }
           final entries = _buildEntries(trackings);
           return RefreshIndicator(

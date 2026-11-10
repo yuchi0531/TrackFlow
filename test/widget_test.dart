@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:trackflow/data/local/database.dart';
@@ -625,6 +626,72 @@ void main() {
       final history = await db.getLatestHistory('623201486493', 'yamato');
       expect(history, isNotNull);
       expect(history!.currentStatus, '配達中');
+    });
+
+    test('ハイフン付き行と正規化行が併存しても例外を投げず最新行を返す', () async {
+      // 正規化導入前のレガシー行（ハイフン付き）と、正規化後の行を両方作る。
+      // 以前は OR 条件が2件ヒットして getSingleOrNull が StateError を投げ、
+      // 一覧からの削除が失敗していた。
+      await db.into(db.savedTrackings).insert(
+            SavedTrackingsCompanion.insert(
+              trackingNumber: '6232-0148-6493',
+              carrier: 'yamato',
+            ),
+          );
+      await db.insertTracking('623201486493', 'yamato');
+
+      final found = await db.findByTrackingNumber('6232-0148-6493', 'yamato');
+      expect(found, isNotNull);
+      expect(found!.trackingNumber, '623201486493', reason: '最新登録（正規化行）を返す');
+
+      // 削除も例外なく完了する。重複行が残ると一覧に出戻るため、併存行も消す。
+      final deleted = await db.deleteTracking(found.id);
+      expect(deleted, 2, reason: 'ハイフン付きの重複行も併せて削除する');
+      expect(await db.findByTrackingNumber('623201486493', 'yamato'), isNull);
+    });
+
+    test('正規化キーが衝突した履歴は fetchedAt が新しい方を採用する', () async {
+      // レガシー（ハイフン付き・古い）と正規化済み（新しい）の履歴を直接挿入する。
+      await db.into(db.trackingHistories).insert(
+            TrackingHistoriesCompanion.insert(
+              trackingNumber: '6232-0148-6493',
+              carrier: 'yamato',
+              currentStatus: '輸送中',
+              fetchedAt: Value(DateTime(2026, 8, 1, 9)),
+            ),
+          );
+      await db.into(db.trackingHistories).insert(
+            TrackingHistoriesCompanion.insert(
+              trackingNumber: '623201486493',
+              carrier: 'yamato',
+              currentStatus: '配達完了',
+              fetchedAt: Value(DateTime(2026, 8, 2, 9)),
+            ),
+          );
+
+      final histories = await db.getAllLatestHistories();
+      expect(histories['623201486493_yamato']?.currentStatus, '配達完了',
+          reason: '取得日時が新しい履歴を残す');
+    });
+
+    test('getAllActive は createdAt が同じでも id 降順で安定して並ぶ', () async {
+      final old = DateTime(2026, 8, 1, 0, 0, 0);
+      for (final number in ['12345678901', '12345678902', '12345678903']) {
+        await db.into(db.savedTrackings).insert(
+              SavedTrackingsCompanion.insert(
+                trackingNumber: number,
+                carrier: 'yamato',
+                createdAt: Value(old),
+              ),
+            );
+      }
+
+      final active = await db.getAllActive();
+      expect(
+        active.map((e) => e.trackingNumber),
+        ['12345678903', '12345678902', '12345678901'],
+        reason: '同一 createdAt では id 降順（登録が新しい順）',
+      );
     });
   });
 }

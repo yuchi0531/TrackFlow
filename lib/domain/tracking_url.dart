@@ -42,7 +42,9 @@ List<String> splitTrackingTokens(String input) {
 
 /// 追跡番号と追跡URLが混在した入力文字列を解析する。
 ///
-/// - URL トークンは既知のクエリパラメータ → URL 全体の数字列の順に追跡番号を探す
+/// - URL トークンは既知のクエリパラメータ → URL 全体の数字列の順に追跡番号を探す。
+///   ただし URL 全体の数字列は**既知の追跡サイトのホストに限る**（未知ホストの
+///   EC 注文URL等から数字を拾って誤登録しないため）。
 /// - URL でないトークンは [TrackingNumberValidator.isValid] で検証する
 /// - 番号を特定できないトークンは結果に含めない（順序は保持）
 /// - 重複除去は呼び出し側で行う（既存の一括追加フローを壊さないため）
@@ -81,12 +83,22 @@ TrackingInput? _parseUrlToken(String token) {
   final host = uri.host.toLowerCase();
   final hint = _carrierFromHost(host);
 
-  // 優先: 既知のクエリパラメータ（reqCodeNo1 / number01 / okurijoNo など）
-  // フォールバック: URL 全体の 10〜14 桁の数字列
-  final number = _numberFromQuery(uri, hint) ?? _numberFromRawUrl(token);
+  // 優先: 既知のクエリパラメータ（reqCodeNo1 / number01 / okurijoNo など）。
+  //        パラメータの種類から会社も推定できるため、ホストが未知でも採用する。
+  // フォールバック: URL 全体の 10〜14 桁の数字列。
+  //        ただし既知ホストのみ許可する。未知ホストの EC 注文URL等から数字を
+  //        拾うと誤登録し、全社への問い合わせが走ってしまうため。
+  final fromQuery = _fromQuery(uri, hint);
+  final number =
+      fromQuery?.number ?? (hint != null ? _numberFromRawUrl(token) : null);
   if (number == null) return null;
 
-  return TrackingInput(number, carrierHint: hint);
+  // クエリパラメータの種類から推定できた会社を優先し、無ければホスト由来の
+  // 推定を使う。ホスト優先にすると、ヤマトのホストに佐川のパラメータ
+  // （okurijoNo）しか無い場合に「佐川の番号なのにヤマトヒント」になるため。
+  // なお `_fromQuery` はホスト推定がある場合その会社のパラメータを優先して
+  // 探すので、通常ケースでは両者は一致する。
+  return TrackingInput(number, carrierHint: fromQuery?.carrier ?? hint);
 }
 
 /// 追跡ページのホストかどうか（スキーム省略の URL も拾うため）。
@@ -106,12 +118,20 @@ const _knownHosts = [
 ];
 
 /// ホスト名から配送会社を推定する。未知のホストは null。
+///
+/// `evil-kuronekoyamato.co.jp` のような偽ホストに一致しないよう、
+/// `endsWith` だけでなく完全一致 or 先頭ドット付きの判定にする。
 Carrier? _carrierFromHost(String host) {
   if (host == 'japanpost.jp' || host.endsWith('.japanpost.jp')) {
     return Carrier.japanPost;
   }
-  if (host.endsWith('kuronekoyamato.co.jp')) return Carrier.yamato;
-  if (host.endsWith('sagawa-exp.co.jp')) return Carrier.sagawa;
+  if (host == 'kuronekoyamato.co.jp' ||
+      host.endsWith('.kuronekoyamato.co.jp')) {
+    return Carrier.yamato;
+  }
+  if (host == 'sagawa-exp.co.jp' || host.endsWith('.sagawa-exp.co.jp')) {
+    return Carrier.sagawa;
+  }
   return null;
 }
 
@@ -129,11 +149,11 @@ Carrier? _carrierFromParamKey(String key) {
   return null;
 }
 
-/// 既知のクエリパラメータから追跡番号を取り出す。
+/// 既知のクエリパラメータから追跡番号と配送会社を取り出す。
 ///
 /// ホストから推定できた会社のパラメータを優先し、次に他の会社のものを走査する
 /// （リダイレクトや汎用URLで会社が推定できない場合の取りこぼし対策）。
-String? _numberFromQuery(Uri uri, Carrier? hint) {
+({String number, Carrier carrier})? _fromQuery(Uri uri, Carrier? hint) {
   final candidates = <(Carrier, String)>[];
   for (final entry in uri.queryParametersAll.entries) {
     final carrier = _carrierFromParamKey(entry.key);
@@ -147,12 +167,12 @@ String? _numberFromQuery(Uri uri, Carrier? hint) {
     for (final (carrier, value) in candidates) {
       if (carrier != hint) continue;
       final number = _numberFromQueryValue(value);
-      if (number != null) return number;
+      if (number != null) return (number: number, carrier: carrier);
     }
   }
-  for (final (_, value) in candidates) {
+  for (final (carrier, value) in candidates) {
     final number = _numberFromQueryValue(value);
-    if (number != null) return number;
+    if (number != null) return (number: number, carrier: carrier);
   }
   return null;
 }
@@ -165,6 +185,8 @@ String? _numberFromQueryValue(String value) {
 
 /// URL 全体から 10〜14 桁の数字列を探すフォールバック。
 ///
+/// **既知の追跡サイトのホストでのみ使用する**（未知ホストの URL から数字を
+/// 拾うと EC の注文番号などを誤登録するため）。
 /// 件数などの短い数字を誤採用しないよう、10〜14 桁の連続（前後が数字でない）に
 /// 限定し、複数ある場合は最後のものを採用する（追跡番号は末尾に現れることが多い）。
 String? _numberFromRawUrl(String token) {

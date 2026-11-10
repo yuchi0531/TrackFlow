@@ -380,5 +380,78 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets('無効な入力が複数あると件数分だけ失敗として集計される', (tester) async {
+      final added = <String>[];
+      final router = buildRouter(
+        ({
+          required String trackingNumber,
+          required String carrier,
+          String? nickname,
+        }) async {
+          added.add(trackingNumber);
+        },
+      );
+
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          addTrackingProvider.overrideWith((ref) {
+            return ({
+              required String trackingNumber,
+              required String carrier,
+              String? nickname,
+            }) async {
+              added.add(trackingNumber);
+            };
+          }),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ));
+
+      await openAddPage(tester);
+
+      // 有効1件＋無効2件（abc / def）。無効分を1件に丸めると
+      // 「1件成功、1件失敗」と誤表示される。
+      await tester.enterText(
+        find.byType(TextField).first,
+        '12345678901\nabc\ndef',
+      );
+      await tester.pump();
+      await tester.tap(find.text('ヤマト運輸'));
+      await tester.pump();
+      await tester.tap(find.text('追跡を開始'));
+      await tester.pumpAndSettle();
+
+      expect(added, ['12345678901']);
+      expect(
+        find.textContaining('1件成功、2件失敗しました'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('小型端末サイズでもオーバーフローせず送信ボタンが表示される', (tester) async {
+      // キーボード表示時の小型端末（横向き相当）を再現する。
+      // 非スクロールの Column + Spacer 構成では RenderFlex overflow していた。
+      tester.view.physicalSize = const Size(320, 420);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final router = buildRouter(
+        ({
+          required String trackingNumber,
+          required String carrier,
+          String? nickname,
+        }) async {},
+      );
+
+      await tester.pumpWidget(ProviderScope(
+        child: MaterialApp.router(routerConfig: router),
+      ));
+
+      await openAddPage(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('追跡を開始'), findsOneWidget);
+    });
   });
 }

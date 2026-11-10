@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:trackflow/data/local/database.dart';
 
 /// 追跡一覧をCSVテキストに変換する（テスト可能な純粋関数）。
@@ -44,6 +47,18 @@ String buildTrackingsCsv(
   }
 
   return buffer.toString();
+}
+
+/// CSV 文字列をファイル書き出し用のバイト列に変換する。
+///
+/// 日本語 Excel で文字化けしないよう、先頭に UTF-8 BOM（`0xEF 0xBB 0xBF`）を
+/// 付与する。インポート側（`parseTrackingsCsv`）も BOM を取り除いて解釈するため、
+/// エクスポート→インポートのラウンドトリップで問題は起きない。
+///
+/// 戻り値は `List<int>` のサブタイプである [Uint8List]
+/// （file_picker の `saveFile(bytes:)` が Uint8List を要求するため）。
+Uint8List encodeTrackingsCsvBytes(String csv) {
+  return utf8.encode('\uFEFF$csv');
 }
 
 /// CSVフィールドをエスケープする。

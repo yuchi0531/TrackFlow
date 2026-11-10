@@ -42,10 +42,19 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase._(super.e) ;
 
   /// 非同期ファクトリ - asyncパス解決を行う
+  ///
+  /// UI / バックグラウンド Isolate / ウィジェット更新は同一ファイルを
+  /// 別々の接続で開くため、同時書き込みで `database is locked`
+  /// （SQLITE_BUSY）が即座に発生しないよう WAL と busy_timeout を設定する。
   static Future<AppDatabase> create() async {
     final dbFolder = await getApplicationDocumentsDirectory();
     final file = File('${dbFolder.path}/trackflow.sqlite');
-    return AppDatabase._(NativeDatabase(file));
+    return AppDatabase._(NativeDatabase(file, setup: (db) {
+      // WAL: 読み書きの同時実行を許容する
+      db.execute('PRAGMA journal_mode=WAL');
+      // ロック解放を最大5秒待つ（既定は即エラー）
+      db.execute('PRAGMA busy_timeout=5000');
+    }));
   }
 
   /// テスト/フォールバック用 - インメモリDB
@@ -54,10 +63,17 @@ class AppDatabase extends _$AppDatabase {
   @override
   int get schemaVersion => 1;
 
+  /// 登録順（新しい順）でアクティブな追跡を取得する。
+  ///
+  /// `created_at` は秒精度のため、CSV 一括インポートや連続追加で同値になり得る。
+  /// 並びがリフレッシュごとに揺れないよう、auto-increment の `id` を副キーにする。
   Future<List<SavedTracking>> getAllActive() {
     return (select(savedTrackings)
           ..where((t) => t.isActive.equals(true))
-          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.createdAt),
+            (t) => OrderingTerm.desc(t.id),
+          ]))
         .get();
   }
 
@@ -67,6 +83,10 @@ class AppDatabase extends _$AppDatabase {
   /// 正規化導入前のレガシーデータにはハイフン付きで保存されたものもある。
   /// まず正規化済みと生の両方でSQL検索し、見つからない場合は保存値を正規化して
   /// 比較することで、ハイフンの有無にかかわらず同一の追跡として検索できる。
+  ///
+  /// 両方が DB に残っている状態（正規化前のハイフン付き行＋正規化後の行）では
+  /// OR 条件が2件以上ヒットする。`id` が最大の行（＝最新登録）を返すことで、
+  /// 例外（`StateError`）による削除失敗を防ぐ。
   Future<SavedTracking?> findByTrackingNumber(String number, String carrier) async {
     final normalized = TrackingNumberValidator.normalize(number);
     final direct = await (select(savedTrackings)
@@ -74,8 +94,12 @@ class AppDatabase extends _$AppDatabase {
               (t.trackingNumber.equals(normalized) |
                   t.trackingNumber.equals(number)) &
               t.carrier.equals(carrier)))
-        .getSingleOrNull();
-    if (direct != null) return direct;
+        .get();
+    if (direct.isNotEmpty) {
+      // id 降順の先頭 = 最新登録。重複が無い通常ケースでも同じ行になる。
+      direct.sort((a, b) => b.id.compareTo(a.id));
+      return direct.first;
+    }
 
     // レガシーフォールバック: ハイフン付きで保存されたレコードは
     // 正規化済み番号のSQL検索にヒットしないため、保存値を正規化して比較する。
@@ -116,12 +140,24 @@ class AppDatabase extends _$AppDatabase {
   /// - 孤児行が SQLite ファイル内に無期限に蓄積する
   ///
   /// レガシーデータ（ハイフン付き保存）も取りこぼさないよう、保存値を正規化して比較する。
+  ///
+  /// 正規化導入前のハイフン付き行と正規化後の行が併存している場合は、
+  /// 正規化後に一致する行をすべて削除する。1行だけ消すと残った重複行が
+  /// 次回の一覧再取得で復活し「削除したのに戻ってくる」ように見えるため。
   Future<int> deleteTracking(int id) async {
     final saved = await (select(savedTrackings)..where((t) => t.id.equals(id)))
         .getSingleOrNull();
     if (saved == null) return 0;
 
     final normalized = TrackingNumberValidator.normalize(saved.trackingNumber);
+    final sameCarrierSaved = await (select(savedTrackings)
+          ..where((t) => t.carrier.equals(saved.carrier)))
+        .get();
+    final savedIds = <int>[
+      for (final s in sameCarrierSaved)
+        if (TrackingNumberValidator.normalize(s.trackingNumber) == normalized)
+          s.id,
+    ];
     final histories = await (select(trackingHistories)
           ..where((t) => t.carrier.equals(saved.carrier)))
         .get();
@@ -141,7 +177,7 @@ class AppDatabase extends _$AppDatabase {
               ..where((t) => t.id.isIn(historyIds)))
             .go();
       }
-      return (delete(savedTrackings)..where((t) => t.id.equals(id))).go();
+      return (delete(savedTrackings)..where((t) => t.id.isIn(savedIds))).go();
     });
   }
 
@@ -210,9 +246,22 @@ class AppDatabase extends _$AppDatabase {
       // savedTrackings（正規化済み）と一致させ、一覧で履歴が引けるようにする。
       final key =
           '${TrackingNumberValidator.normalize(h.trackingNumber)}_${h.carrier}';
-      result[key] = h;
+      final existing = result[key];
+      // レガシー（ハイフン付き）と正規化済みの履歴が同じキーに衝突する場合、
+      // 先勝ちの上書きだと新旧どちらが残るか不定になる。
+      // 取得日時が新しい方（同時刻なら id が大きい方）を残す。
+      if (existing == null || _isNewerHistory(h, existing)) {
+        result[key] = h;
+      }
     }
     return result;
+  }
+
+  /// [a] が [b] より新しい履歴かどうか（fetchedAt 優先、同時刻は id）。
+  static bool _isNewerHistory(TrackingHistory a, TrackingHistory b) {
+    final byFetchedAt = a.fetchedAt.compareTo(b.fetchedAt);
+    if (byFetchedAt != 0) return byFetchedAt > 0;
+    return a.id > b.id;
   }
 
   /// 複数の履歴IDに対するイベントを一括取得

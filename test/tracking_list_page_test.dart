@@ -29,6 +29,36 @@ class _FakeTrackingListNotifier extends TrackingListNotifier {
   }
 }
 
+/// 削除が DB 例外で失敗するケースを再現する Notifier。
+/// state からの除去は本物と同じく先に行い、失敗時に復元する。
+class _FailingTrackingListNotifier extends TrackingListNotifier {
+  final List<TrackingInfo> items;
+  _FailingTrackingListNotifier(this.items);
+
+  @override
+  Future<List<TrackingInfo>> build() async => items;
+
+  @override
+  Future<void> delete({
+    required String trackingNumber,
+    required String carrier,
+  }) async {
+    final current = state.value ?? const <TrackingInfo>[];
+    final index = current.indexWhere((t) =>
+        t.trackingNumber == trackingNumber && t.carrier.name == carrier);
+    final removed = index >= 0 ? current[index] : null;
+    state = AsyncData(current
+        .where((t) =>
+            t.trackingNumber != trackingNumber || t.carrier.name != carrier)
+        .toList());
+    if (removed != null) {
+      final restored = [...?state.value]..insert(index, removed);
+      state = AsyncData(restored);
+    }
+    throw StateError('delete failed');
+  }
+}
+
 TrackingInfo _info(String number, String status, {DateTime? lastUpdated}) {
   return TrackingInfo(
     trackingNumber: number,
@@ -43,6 +73,16 @@ Widget _buildTestApp(List<TrackingInfo> items) {
   return ProviderScope(
     overrides: [
       trackingListProvider.overrideWith(() => _FakeTrackingListNotifier(items)),
+    ],
+    child: const MaterialApp(home: TrackingListPage()),
+  );
+}
+
+Widget _buildFailingTestApp(List<TrackingInfo> items) {
+  return ProviderScope(
+    overrides: [
+      trackingListProvider
+          .overrideWith(() => _FailingTrackingListNotifier(items)),
     ],
     child: const MaterialApp(home: TrackingListPage()),
   );
@@ -101,6 +141,16 @@ void main() {
 
       expect(find.text('追跡中の荷物はありません'), findsOneWidget);
       expect(find.textContaining('配達中'), findsNothing);
+    });
+
+    testWidgets('空リストでもスクロール可能（pull-to-refresh 可能）', (tester) async {
+      await tester.pumpWidget(_buildTestApp([]));
+      await tester.pumpAndSettle();
+
+      // RefreshIndicator の下にスクロール可能な領域があること
+      expect(find.byType(RefreshIndicator), findsOneWidget);
+      final scrollable = tester.widget<Scrollable>(find.byType(Scrollable));
+      expect(scrollable.physics, isA<AlwaysScrollableScrollPhysics>());
     });
   });
 
@@ -171,6 +221,25 @@ void main() {
       // 配達中が0件になったので見出しごと消える
       expect(find.textContaining('配達中'), findsNothing);
       expect(find.text('終了済 (1)'), findsOneWidget);
+    });
+
+    testWidgets('削除失敗時はエラーSnackBarが出てカードが復元される', (tester) async {
+      await tester.pumpWidget(_buildFailingTestApp([
+        _info('11111111111', '輸送中'),
+        _info('22222222222', '配達完了'),
+      ]));
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.text('11111111111'), const Offset(-500, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '削除'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('削除に失敗しました。通信状況を確認して再度お試しください'),
+        findsOneWidget,
+      );
+      expect(find.text('11111111111'), findsOneWidget);
     });
   });
 }

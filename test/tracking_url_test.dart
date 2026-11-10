@@ -129,21 +129,84 @@ void main() {
       expect(inputs.single.number, '123456789012');
     });
 
-    test('キャリア不明の汎用URLでも番号が取れればキャリアヒントは null', () {
+    test('未知ホストのURLからは数字列を拾わない（誤登録防止）', () {
+      // EC の注文URL等を貼った場合に全社への問い合わせが走るのを防ぐ
+      expect(
+        parseTrackingInputs('https://example.com/orders/123456789012'),
+        isEmpty,
+      );
+      expect(
+        parseTrackingInputs('https://example.com/track/123456789012'),
+        isEmpty,
+      );
+    });
+
+    test('未知ホストでも既知のクエリパラメータなら番号を採用する', () {
       final inputs = parseTrackingInputs(
-        'https://example.com/track/123456789012',
+        'https://unknown.example.com/x?reqCodeNo1=1234567890123',
       );
 
-      expect(inputs.single.number, '123456789012');
-      expect(inputs.single.carrierHint, isNull);
+      expect(inputs.single.number, '1234567890123');
+      expect(inputs.single.carrierHint, Carrier.japanPost);
     });
 
     test('URLエンコードされたハイフン（%2D）を含む番号も抽出できる', () {
       final inputs = parseTrackingInputs(
-        'https://example.com/track?no=1234%2D5678%2D9012',
+        'https://trackings.post.japanpost.jp/services/srv/search/direct'
+        '?no=1234%2D5678%2D9012',
       );
 
       expect(inputs.single.number, '123456789012');
+    });
+
+    test('偽ホスト（evil-kuronekoyamato.co.jp）はヤマトと判定しない', () {
+      // endsWith だけで判定すると偽ホストも一致してしまう。
+      // ホストが本物でなければ URL 全体からの数字列フォールバックも行わない。
+      expect(
+        parseTrackingInputs('https://evil-kuronekoyamato.co.jp/123456789012'),
+        isEmpty,
+      );
+      expect(
+        parseTrackingInputs('https://evil-sagawa-exp.co.jp/1234567890'),
+        isEmpty,
+      );
+      expect(
+        parseTrackingInputs('https://evil-japanpost.jp/123456789012'),
+        isEmpty,
+      );
+    });
+
+    test('偽ホストでもクエリパラメータの種類から推定した会社は採用する', () {
+      // ホストは信用しないが、パラメータ種別からの推定は従来どおり有効
+      // （未知ホストの取りこぼし対策としての既存挙動を維持する）。
+      // したがって `number01` 付きの偽ヤマトホストURLでは、ホスト由来ではなく
+      // パラメータ由来の yamato ヒントが付く（番号は正しく取れる）。
+      final inputs = parseTrackingInputs(
+        'https://evil-kuronekoyamato.co.jp/x?okurijoNo=1234567890',
+      );
+
+      expect(inputs.single.number, '1234567890');
+      expect(inputs.single.carrierHint, Carrier.sagawa);
+    });
+
+    test('ホストのルートドメイン自体（サブドメイン無し）も判定できる', () {
+      final inputs = parseTrackingInputs(
+        'https://kuronekoyamato.co.jp/123456789012',
+      );
+
+      expect(inputs.single.number, '123456789012');
+      expect(inputs.single.carrierHint, Carrier.yamato);
+    });
+
+    test('ヤマトのホストに佐川のパラメータしか無い場合はパラメータ由来の会社を使う', () {
+      // ホスト優先にすると「佐川の番号なのにヤマトヒント」になり、
+      // 佐川への問い合わせが走らず取得失敗するため、パラメータ種別を優先する。
+      final inputs = parseTrackingInputs(
+        'https://toi.kuronekoyamato.co.jp/cgi-bin/tneko?okurijoNo=1234567890',
+      );
+
+      expect(inputs.single.number, '1234567890');
+      expect(inputs.single.carrierHint, Carrier.sagawa);
     });
 
     test('URL内に追跡番号が無ければ結果に含まれない', () {
@@ -194,11 +257,21 @@ void main() {
 
     test('カンマ区切りでも混在入力を受け付ける', () {
       final inputs = parseTrackingInputs(
-        '12345678901, https://example.com/track/345678901234',
+        '12345678901, https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do'
+        '?okurijoNo=345678901234',
       );
 
       expect(inputs, hasLength(2));
       expect(inputs.last.number, '345678901234');
+    });
+
+    test('未知ホストのURLは混在入力でも結果から除外される', () {
+      final inputs = parseTrackingInputs(
+        '12345678901, https://example.com/track/345678901234',
+      );
+
+      expect(inputs, hasLength(1));
+      expect(inputs.single.number, '12345678901');
     });
   });
 }

@@ -413,6 +413,10 @@ Future<void> initBackgroundService() async {
       constraints: Constraints(
         networkType: NetworkType.connected,
       ),
+      // 既定の UPDATE だと起動のたびに次回実行時刻が後ろ倒しになるため、
+      // 既存タスクがあれば何もしない keep を指定する。
+      // 間隔変更は updateBackgroundTaskInterval が cancel→再登録で行う。
+      existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
     );
     debugPrint('Background service initialized with interval: $interval');
   } catch (e) {
