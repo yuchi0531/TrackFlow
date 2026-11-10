@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:trackflow/domain/tracking_number.dart';
+import 'package:trackflow/domain/tracking_url.dart';
 import 'package:trackflow/presentation/add_tracking/widgets/carrier_selector.dart';
 import 'package:trackflow/provider/tracking_providers.dart';
 
@@ -37,9 +37,10 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
   Future<void> _submit() async {
     if (_isSubmitting) return;
 
-    // 改行・カンマ・スペース区切りで複数番号を受け付ける
-    final numbers = splitTrackingNumbers(_numberController.text);
-    if (numbers.isEmpty) return;
+    // 追跡番号そのもの、または各社の追跡URLを受け付ける（区切りは既存どおり）
+    final tokens = splitTrackingTokens(_numberController.text);
+    if (tokens.isEmpty) return;
+    final parsedInputs = parseTrackingInputs(_numberController.text);
 
     // 配送会社は「自動判定」または明示選択。いずれも未選択になることはないが、
     // 防御的に null の場合は選択を促す。
@@ -54,25 +55,28 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
     }
     final autoDetect = carrier == kAutoDetectCarrier;
 
-    // 形式が正しい番号のみを対象にする（無効な番号はスキップ）。
-    // 重複判定は正規化後（ハイフン除去後）に行う。`1234-5678-9012` と
-    // `123456789012` を別物として二重登録しようとするのを防ぐ。
-    final validNumbers = numbers
-        .where(TrackingNumberValidator.isValid)
-        .map(TrackingNumberValidator.normalize)
-        .toList();
-    final invalidCount = numbers.length - validNumbers.length;
-    if (validNumbers.isEmpty) {
+    // 重複判定は正規化後の番号（parseTrackingInputs が正規化済み）で行う。
+    // `1234-5678-9012` と `123456789012`、URL と素の番号を別物として
+    // 二重登録しようとするのを防ぐ。
+    // 同じ番号が複数回現れた場合は最初の入力（＝先に書かれた会社ヒント）を採用する。
+    final inputsByNumber = <String, TrackingInput>{};
+    for (final input in parsedInputs) {
+      inputsByNumber.putIfAbsent(input.number, () => input);
+    }
+    final inputs = inputsByNumber.values.toList();
+
+    // 入力全体から番号を1つも取り出せなかった分は「形式エラー」として集計する
+    final invalidCount = tokens.length - parsedInputs.length;
+    if (inputs.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('有効な追跡番号がありません（10〜14桁）')),
+          const SnackBar(
+            content: Text('追跡番号またはURLを認識できませんでした'),
+          ),
         );
       }
       return;
     }
-
-    // 同一番号の重複追加を避けるため、順序を保ったまま重複を除去する
-    final uniqueNumbers = validNumbers.toSet().toList();
 
     setState(() => _isSubmitting = true);
 
@@ -86,11 +90,22 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
       // 各番号を順次登録する（fetch成功時のみ登録する既存ロジックを維持）
       var successCount = 0;
       final failures = <String>[];
-      for (final number in uniqueNumbers) {
+      for (final input in inputs) {
+        // 会社決定の優先順位:
+        // 1. 手動選択（既存挙動を維持）
+        // 2. 追跡URLから推定した会社（各社への無駄な問い合わせと12桁の誤判定を避ける）
+        // 3. 桁数からの自動判定
+        final hintedCarrier = autoDetect ? input.carrierHint?.name : carrier;
         try {
-          if (autoDetect) {
+          if (hintedCarrier != null) {
+            await addTracking(
+              trackingNumber: input.number,
+              carrier: hintedCarrier,
+              nickname: nickname,
+            );
+          } else {
             final detected = await addTrackingAuto(
-              trackingNumber: number,
+              trackingNumber: input.number,
               nickname: nickname,
             );
             if (detected == null) {
@@ -98,12 +113,6 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
               failures.add('配送会社を自動判定できませんでした');
               continue;
             }
-          } else {
-            await addTracking(
-              trackingNumber: number,
-              carrier: carrier,
-              nickname: nickname,
-            );
           }
           successCount++;
         } catch (e) {
@@ -113,7 +122,7 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
 
       // 形式エラーでスキップした分も失敗として合算する
       if (invalidCount > 0) {
-        failures.insert(0, '追跡番号の形式が正しくありません（10〜14桁）');
+        failures.insert(0, '追跡番号またはURLを認識できませんでした');
       }
 
       final summary = buildAddResultSummary(successCount, failures);
@@ -175,9 +184,9 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
               keyboardType: TextInputType.text,
               maxLines: 3,
               decoration: const InputDecoration(
-                hintText: '1234-5678-9012',
-                labelText: '追跡番号',
-                helperText: '複数ある場合は改行・カンマ・スペースで区切って入力',
+                hintText: '1234-5678-9012 または 追跡URL',
+                labelText: '追跡番号 / URL',
+                helperText: '追跡番号または各社の追跡URL（複数は改行・カンマ区切り）',
               ),
             ),
             const SizedBox(height: 24),
@@ -220,13 +229,10 @@ class _AddTrackingPageState extends ConsumerState<AddTrackingPage> {
 
 /// 追跡番号の入力文字列を改行・カンマ・スペース（全角含む）区切りで分割する。
 /// 空文字は除外し、前後の空白を除去して返す。
-List<String> splitTrackingNumbers(String input) {
-  return input
-      .split(RegExp(r'[\s,、]+'))
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toList();
-}
+///
+/// URL を含む入力の解析は [parseTrackingInputs] が担う。分割規則を二重定義
+/// しないよう、ここでは共通の [splitTrackingTokens] に委譲する。
+List<String> splitTrackingNumbers(String input) => splitTrackingTokens(input);
 
 /// 成功/失敗件数と失敗の内訳（最初の1-2件）をまとめたメッセージを組み立てる。
 String buildAddResultSummary(int successCount, List<String> failures) {

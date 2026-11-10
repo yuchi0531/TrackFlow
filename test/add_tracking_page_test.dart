@@ -142,9 +142,109 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('追跡番号の形式が正しくありません（10〜14桁）'),
+        find.textContaining('追跡番号またはURLを認識できませんでした'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('日本郵便のURLを自動判定のまま追加すると carrier=japanPost で登録される', (tester) async {
+      final added = <(String, String)>[];
+      final router = buildRouter(
+        ({
+          required String trackingNumber,
+          required String carrier,
+          String? nickname,
+        }) async {
+          fail('自動判定プロバイダは呼ばれないはず');
+        },
+      );
+
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          // URL の会社ヒントがあるため、明示選択プロバイダが使われる
+          addTrackingProvider.overrideWith((ref) {
+            return ({
+              required String trackingNumber,
+              required String carrier,
+              String? nickname,
+            }) async {
+              added.add((trackingNumber, carrier));
+            };
+          }),
+          addTrackingAutoProvider.overrideWith((ref) {
+            return ({
+              required String trackingNumber,
+              String? nickname,
+            }) async {
+              fail('URLから会社が分かる場合は自動判定しないはず');
+            };
+          }),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ));
+
+      await openAddPage(tester);
+
+      // 配送会社は既定の「自動判定」のまま、日本郵便のURLを貼り付ける
+      await tester.enterText(
+        find.byType(TextField).first,
+        'https://trackings.post.japanpost.jp/services/srv/search/direct'
+        '?reqCodeNo1=123456789012&searchKind=S004&locale=ja',
+      );
+      await tester.pump();
+      await tester.tap(find.text('追跡を開始'));
+      await tester.pumpAndSettle();
+
+      expect(added, [('123456789012', 'japanPost')]);
+      expect(find.text('追加画面を開く'), findsOneWidget);
+      expect(find.textContaining('1件すべて登録しました'), findsOneWidget);
+    });
+
+    testWidgets('URLと素の番号が混在していても重複登録されない', (tester) async {
+      final added = <String>[];
+      final router = buildRouter(
+        ({
+          required String trackingNumber,
+          required String carrier,
+          String? nickname,
+        }) async {
+          added.add(trackingNumber);
+        },
+      );
+
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          addTrackingProvider.overrideWith((ref) {
+            return ({
+              required String trackingNumber,
+              required String carrier,
+              String? nickname,
+            }) async {
+              added.add(trackingNumber);
+            };
+          }),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ));
+
+      await openAddPage(tester);
+      await tester.tap(find.text('佐川急便'));
+      await tester.pump();
+
+      // 同一番号（佐川URL由来とハイフン付きの素の番号）を混在させる
+      await tester.enterText(
+        find.byType(TextField).first,
+        'https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do?okurijoNo=1234567890\n'
+        '1234-5678-9012\n'
+        'https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do?okurijoNo=1234-5678-9012',
+      );
+      await tester.pump();
+      await tester.tap(find.text('追跡を開始'));
+      await tester.pumpAndSettle();
+
+      // 正規化後に同一となる番号は1回だけ登録される
+      expect(added, ['1234567890', '123456789012']);
+      expect(find.textContaining('2件すべて登録しました'), findsOneWidget);
     });
 
     testWidgets('配送会社未選択（既定の自動判定）なら自動判定プロバイダが使われる', (tester) async {
