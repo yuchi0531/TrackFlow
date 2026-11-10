@@ -7,9 +7,6 @@ import 'package:trackflow/presentation/tracking_list/widgets/empty_state.dart';
 import 'package:trackflow/presentation/tracking_list/widgets/tracking_card.dart';
 import 'package:trackflow/provider/tracking_providers.dart';
 
-/// ステータス絞り込みの選択肢
-enum _StatusFilter { all, inTransit, delivered }
-
 /// 並び替えの選択肢
 enum _SortBy { registration, lastUpdated }
 
@@ -21,43 +18,18 @@ class TrackingListPage extends ConsumerStatefulWidget {
 }
 
 class _TrackingListPageState extends ConsumerState<TrackingListPage> {
-  _StatusFilter _filterStatus = _StatusFilter.all;
   _SortBy _sortBy = _SortBy.registration;
 
-  /// 配達完了の自動アーカイブ（ON で配達済みカードを一覧から隠す）
-  bool _hideDelivered = false;
-
-  /// `trackingListProvider` のデータに絞り込み・並び替え・自動アーカイブを適用する。
-  /// Provider側は変更せず、UI側のローカル状態で表示を制御する。
-  List<TrackingInfo> _applyFilterAndSort(List<TrackingInfo> trackings) {
-    var result = trackings;
-
-    // ステータス絞り込み
-    switch (_filterStatus) {
-      case _StatusFilter.all:
-        break;
-      case _StatusFilter.inTransit:
-        result =
-            result.where((t) => !isDeliveredStatus(t.currentStatus)).toList();
-      case _StatusFilter.delivered:
-        result = result.where((t) => isDeliveredStatus(t.currentStatus)).toList();
-    }
-
-    // 配達完了の自動アーカイブ。
-    // 「配達済み」フィルタ選択中はユーザーが明示的に見たい場合なので、
-    // トグルがONでも表示する。
-    if (_hideDelivered && _filterStatus != _StatusFilter.delivered) {
-      result =
-          result.where((t) => !isDeliveredStatus(t.currentStatus)).toList();
-    }
-
-    // 並び替え
+  /// 並び替えを適用した新しいリストを返す。
+  ///
+  /// 登録順は Provider の並び（createdAt 降順）をそのまま使う。
+  /// 並び替えはセクション（配達中／終了済）ごとに適用する。
+  List<TrackingInfo> _sort(List<TrackingInfo> trackings) {
     switch (_sortBy) {
       case _SortBy.registration:
-        // 登録順（Providerの並び = createdAt 降順）をそのまま使う
-        break;
+        return trackings;
       case _SortBy.lastUpdated:
-        final sorted = [...result];
+        final sorted = [...trackings];
         sorted.sort((a, b) {
           final aUpdated = a.lastUpdated;
           final bUpdated = b.lastUpdated;
@@ -66,14 +38,12 @@ class _TrackingListPageState extends ConsumerState<TrackingListPage> {
           if (bUpdated == null) return -1;
           return bUpdated.compareTo(aUpdated); // 新しい順
         });
-        result = sorted;
+        return sorted;
     }
-
-    return result;
   }
 
   Future<bool> _confirmDismiss(TrackingInfo info) async {
-    final theme = Theme.of(context);
+    final cs = Theme.of(context).colorScheme;
     return await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -87,7 +57,8 @@ class _TrackingListPageState extends ConsumerState<TrackingListPage> {
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
                 style: FilledButton.styleFrom(
-                  backgroundColor: theme.colorScheme.error,
+                  backgroundColor: cs.error,
+                  foregroundColor: cs.onError,
                 ),
                 child: const Text('削除'),
               ),
@@ -97,10 +68,101 @@ class _TrackingListPageState extends ConsumerState<TrackingListPage> {
         false;
   }
 
+  /// スワイプ時にカードの下から現れる削除ビュー。
+  ///
+  /// カードと同じ角丸12でクリップし、カードの高さにそのまま収める
+  /// （固定 height は指定せず Alignment.centerRight で縦中央に配置する）。
+  Widget _buildDeleteBackground() {
+    final cs = Theme.of(context).colorScheme;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        color: cs.error,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.delete_outline, color: cs.onError, size: 24),
+            const SizedBox(width: 8),
+            Text(
+              '削除',
+              style: TextStyle(
+                color: cs.onError,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 見出しとカードをフラットなリストに積む
+  /// （ListView.builder のインデックスと Dismissible の対応を保つため）。
+  List<Widget> _buildEntries(List<TrackingInfo> trackings) {
+    final inTransit = _sort(
+      trackings.where((t) => !isDeliveredStatus(t.currentStatus)).toList(),
+    );
+    final finished = _sort(
+      trackings.where((t) => isDeliveredStatus(t.currentStatus)).toList(),
+    );
+
+    final entries = <Widget>[];
+
+    if (inTransit.isNotEmpty) {
+      entries.add(_SectionHeader(
+        key: const ValueKey('header_in_transit'),
+        label: '配達中 (${inTransit.length})',
+        color: Theme.of(context).colorScheme.primary,
+      ));
+      entries.addAll(inTransit.map(_buildCard));
+    }
+
+    if (finished.isNotEmpty) {
+      entries.add(_SectionHeader(
+        key: const ValueKey('header_finished'),
+        label: '終了済 (${finished.length})',
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ));
+      entries.addAll(finished.map(_buildCard));
+    }
+
+    return entries;
+  }
+
+  Widget _buildCard(TrackingInfo info) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Dismissible(
+        key: ValueKey('${info.trackingNumber}_${info.carrier.name}'),
+        direction: DismissDirection.endToStart,
+        dismissThresholds: const {DismissDirection.endToStart: 0.4},
+        confirmDismiss: (_) => _confirmDismiss(info),
+        onDismissed: (_) async {
+          // NotifierのdeleteでDB削除前に state から即時除去するため、
+          // 削除済みアイテムが一瞬戻る（Dismissibleアサーション）のを防ぐ。
+          await ref
+              .read(trackingListProvider.notifier)
+              .delete(
+                trackingNumber: info.trackingNumber,
+                carrier: info.carrier.name,
+              );
+        },
+        background: _buildDeleteBackground(),
+        secondaryBackground: _buildDeleteBackground(),
+        child: TrackingCard(
+          info: info,
+          onTap: () => context.push(
+              '/detail/${info.trackingNumber}?carrier=${info.carrier.name}'),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final trackingsAsync = ref.watch(trackingListProvider);
-    final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -124,121 +186,43 @@ class _TrackingListPageState extends ConsumerState<TrackingListPage> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: SegmentedButton<_StatusFilter>(
-              segments: const [
-                ButtonSegment(
-                  value: _StatusFilter.all,
-                  label: Text('すべて'),
-                ),
-                ButtonSegment(
-                  value: _StatusFilter.inTransit,
-                  label: Text('配達中'),
-                ),
-                ButtonSegment(
-                  value: _StatusFilter.delivered,
-                  label: Text('配達済み'),
-                ),
-              ],
-              selected: {_filterStatus},
-              onSelectionChanged: (selection) =>
-                  setState(() => _filterStatus = selection.first),
-              showSelectedIcon: false,
+      body: trackingsAsync.when(
+        data: (trackings) {
+          if (trackings.isEmpty) {
+            return const EmptyState();
+          }
+          final entries = _buildEntries(trackings);
+          return RefreshIndicator(
+            onRefresh: () async {
+              // ref.refreshで確実に新しいFutureを取得して待機する
+              // ignore: unused_result
+              await ref.refresh(trackingListProvider.future);
+            },
+            child: ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              itemCount: entries.length,
+              itemBuilder: (context, index) => entries[index],
             ),
-          ),
-          SwitchListTile(
-            title: const Text('配達完了を表示しない'),
-            subtitle: const Text('配達済みの荷物を一覧から隠します'),
-            value: _hideDelivered,
-            onChanged: (value) => setState(() => _hideDelivered = value),
-            dense: true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-          ),
-          Expanded(
-            child: trackingsAsync.when(
-              data: (trackings) {
-                if (trackings.isEmpty) {
-                  return const EmptyState();
-                }
-                final visible = _applyFilterAndSort(trackings);
-                if (visible.isEmpty) {
-                  // 絞り込みで0件になった場合の空メッセージ（EmptyStateは流用しない）
-                  return const _NoMatchState();
-                }
-                return RefreshIndicator(
-                  onRefresh: () async {
-                    // ref.refreshで確実に新しいFutureを取得して待機する
-                    // ignore: unused_result
-                    await ref.refresh(trackingListProvider.future);
-                  },
-                  child: ListView.builder(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    itemCount: visible.length,
-                    itemBuilder: (context, index) {
-                      final info = visible[index];
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Dismissible(
-                          key: ValueKey(
-                              '${info.trackingNumber}_${info.carrier.name}'),
-                          direction: DismissDirection.endToStart,
-                          confirmDismiss: (_) => _confirmDismiss(info),
-                          onDismissed: (_) async {
-                            // NotifierのdeleteでDB削除前に state から即時除去するため、
-                            // 削除済みアイテムが一瞬戻る（Dismissibleアサーション）のを防ぐ。
-                            await ref
-                                .read(trackingListProvider.notifier)
-                                .delete(
-                                  trackingNumber: info.trackingNumber,
-                                  carrier: info.carrier.name,
-                                );
-                          },
-                          background: Container(
-                            alignment: Alignment.centerRight,
-                            padding: const EdgeInsets.only(right: 20),
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.error,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Icon(Icons.delete_outline,
-                                color: theme.colorScheme.onError, size: 28),
-                          ),
-                          child: TrackingCard(
-                            info: info,
-                            onTap: () => context.push(
-                                '/detail/${info.trackingNumber}?carrier=${info.carrier.name}'),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                );
-              },
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (error, _) => Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.error_outline,
-                        size: 48, color: Colors.grey),
-                    const SizedBox(height: 16),
-                    Text('データの読み込みに失敗しました',
-                        style: Theme.of(context).textTheme.bodyLarge),
-                    const SizedBox(height: 8),
-                    FilledButton.tonal(
-                      onPressed: () => ref.invalidate(trackingListProvider),
-                      child: const Text('再試行'),
-                    ),
-                  ],
-                ),
+          );
+        },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, _) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, size: 48, color: Colors.grey),
+              const SizedBox(height: 16),
+              Text('データの読み込みに失敗しました',
+                  style: Theme.of(context).textTheme.bodyLarge),
+              const SizedBox(height: 8),
+              FilledButton.tonal(
+                onPressed: () => ref.invalidate(trackingListProvider),
+                child: const Text('再試行'),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => context.push('/add'),
@@ -248,39 +232,28 @@ class _TrackingListPageState extends ConsumerState<TrackingListPage> {
   }
 }
 
-/// 絞り込み結果が0件のときに表示するシンプルな空メッセージ
-class _NoMatchState extends StatelessWidget {
-  const _NoMatchState();
+/// セクション見出し（配達中／終了済）。件数を括弧で併記する。
+class _SectionHeader extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _SectionHeader({
+    super.key,
+    required this.label,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.filter_alt_off_outlined,
-              size: 64,
-              color: theme.colorScheme.onSurface.withAlpha(100),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '該当する追跡がありません',
-              style: theme.textTheme.titleMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withAlpha(180),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '絞り込み条件を変更してください',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withAlpha(120),
-              ),
-            ),
-          ],
+    return Padding(
+      // カード間の 8px リズムを崩さないよう、下は詰める（カード側の余白と合算しない）
+      padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
+      child: Text(
+        label,
+        style: theme.textTheme.titleSmall?.copyWith(
+          color: color,
+          fontWeight: FontWeight.bold,
         ),
       ),
     );

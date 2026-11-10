@@ -119,6 +119,8 @@ class TrackingCard extends StatelessWidget {
     final statusIcon = _statusIcon(info.currentStatus);
 
     return Card(
+      // Dismissible の背景（赤）とカードの外形を一致させるため余白を0にする
+      margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
