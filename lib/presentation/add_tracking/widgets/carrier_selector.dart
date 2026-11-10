@@ -19,6 +19,7 @@ class CarrierSelector extends StatelessWidget {
       ('japanPost', '日本郵便', Icons.mail_outline),
       ('yamato', 'ヤマト運輸', Icons.local_shipping_outlined),
       ('sagawa', '佐川急便', Icons.inventory_2_outlined),
+      ('espo', 'エスポ便', Icons.public),
     ];
     return Wrap(
       spacing: 8,

@@ -14,6 +14,13 @@ class CarrierUrls {
   static const sagawaTrackingUrl =
       'https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do';
 
+  /// エスポ便（ESPエクスプレス） 追跡API（スクレイピング用）
+  ///
+  /// 追跡ページは React SPA のため HTML を取得できない。ページが内部で叩く
+  /// JSON API（`{"hawbNoList": ["<番号>"]}` を POST、認証不要）を直接利用する。
+  static const espoTrackingUrl =
+      'https://www.console.espoirer.com/prod/other/status';
+
   /// 日本郵便 ブラウザで開く用追跡URL（GETで番号を埋め込める）
   static String japanPostWebTrackingUrl(String number) =>
       'https://trackings.post.japanpost.jp/services/srv/search/direct'
@@ -26,6 +33,10 @@ class CarrierUrls {
   /// 佐川急便 ブラウザで開く用追跡URL（POST専用のためトップページ）
   static const sagawaWebTrackingUrl =
       'https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do';
+
+  /// エスポ便 ブラウザで開く用追跡URL（SPAのため番号は埋め込めない）
+  static const espoWebTrackingUrl =
+      'https://www.console.espoirer.com/express-tracking';
 
   /// User-Agent（全社共通）
   static const userAgent =

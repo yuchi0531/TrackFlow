@@ -66,6 +66,8 @@ class TrackingCard extends StatelessWidget {
         return 'ヤ';
       case Carrier.sagawa:
         return '佐';
+      case Carrier.espo:
+        return 'エ';
     }
   }
 
@@ -77,6 +79,8 @@ class TrackingCard extends StatelessWidget {
         return Colors.orange.shade700;
       case Carrier.sagawa:
         return Colors.blue.shade700;
+      case Carrier.espo:
+        return Colors.purple.shade600;
     }
   }
 

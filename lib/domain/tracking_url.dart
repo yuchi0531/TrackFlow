@@ -3,11 +3,11 @@ import 'package:trackflow/domain/tracking_number.dart';
 
 /// 追跡入力（追跡番号そのもの、または各社の追跡URL）の解析結果。
 ///
-/// [number] は正規化済み（数字のみ）の追跡番号。
+/// [number] は正規化済みの追跡番号（数字のみ、エスポ便のみ `E` + 11桁）。
 /// [carrierHint] は URL のホストから推定した配送会社で、推定できなければ null。
 /// hint がある場合は URL の会社情報を優先する（桁数との整合性は検証しない）。
 class TrackingInput {
-  /// 正規化済みの追跡番号（数字のみ）
+  /// 正規化済みの追跡番号（数字のみ、またはエスポ便の `E`+11桁）
   final String number;
 
   /// URL から推定した配送会社（不明なら null）
@@ -89,8 +89,8 @@ TrackingInput? _parseUrlToken(String token) {
   //        ただし既知ホストのみ許可する。未知ホストの EC 注文URL等から数字を
   //        拾うと誤登録し、全社への問い合わせが走ってしまうため。
   final fromQuery = _fromQuery(uri, hint);
-  final number =
-      fromQuery?.number ?? (hint != null ? _numberFromRawUrl(token) : null);
+  final number = fromQuery?.number ??
+      (hint != null ? _numberFromRawUrl(token, hint) : null);
   if (number == null) return null;
 
   // クエリパラメータの種類から推定できた会社を優先し、無ければホスト由来の
@@ -115,6 +115,7 @@ const _knownHosts = [
   'japanpost.jp',
   'kuronekoyamato.co.jp',
   'sagawa-exp.co.jp',
+  'espoirer.com',
 ];
 
 /// ホスト名から配送会社を推定する。未知のホストは null。
@@ -132,6 +133,9 @@ Carrier? _carrierFromHost(String host) {
   if (host == 'sagawa-exp.co.jp' || host.endsWith('.sagawa-exp.co.jp')) {
     return Carrier.sagawa;
   }
+  if (host == 'espoirer.com' || host.endsWith('.espoirer.com')) {
+    return Carrier.espo;
+  }
   return null;
 }
 
@@ -140,12 +144,16 @@ Carrier? _carrierFromHost(String host) {
 /// - 日本郵便: `reqCodeNo1` / `reqCodeNo2` …
 /// - ヤマト運輸: `number01` …（`number00` は件数なので除外）
 /// - 佐川急便: `okurijoNo` / `okurijoNo1` …
+/// - エスポ便: `hawbNo` / `hawbNos` / `hawbNoList`（OWM 系の送り状番号）
 Carrier? _carrierFromParamKey(String key) {
   final lower = key.toLowerCase();
   if (RegExp(r'^reqcodeno\d*$').hasMatch(lower)) return Carrier.japanPost;
   if (lower == 'number00') return null;
   if (RegExp(r'^number\d+$').hasMatch(lower)) return Carrier.yamato;
   if (RegExp(r'^okurijono\d*$').hasMatch(lower)) return Carrier.sagawa;
+  if (lower == 'hawbno' || lower == 'hawbnos' || lower == 'hawbnolist') {
+    return Carrier.espo;
+  }
   return null;
 }
 
@@ -183,13 +191,17 @@ String? _numberFromQueryValue(String value) {
   return TrackingNumberValidator.isValid(number) ? number : null;
 }
 
-/// URL 全体から 10〜14 桁の数字列を探すフォールバック。
+/// URL 全体から追跡番号を探すフォールバック。
 ///
 /// **既知の追跡サイトのホストでのみ使用する**（未知ホストの URL から数字を
 /// 拾うと EC の注文番号などを誤登録するため）。
-/// 件数などの短い数字を誤採用しないよう、10〜14 桁の連続（前後が数字でない）に
-/// 限定し、複数ある場合は最後のものを採用する（追跡番号は末尾に現れることが多い）。
-String? _numberFromRawUrl(String token) {
+/// 数字のみの番号は、件数などの短い数字を誤採用しないよう、10〜14 桁の連続
+/// （前後が数字でない）に限定し、複数ある場合は最後のものを採用する
+/// （追跡番号は末尾に現れることが多い）。
+///
+/// エスポ便の追跡URLは SPA で番号をクエリに持たないため、`E` + 11桁の英数字
+/// 列（例 `E10098595043`）も抽出対象にする。
+String? _numberFromRawUrl(String token, Carrier hint) {
   String decoded;
   try {
     // %2D などのエンコードを解除しておく（失敗しても元の文字列で続行する）
@@ -199,6 +211,17 @@ String? _numberFromRawUrl(String token) {
   }
 
   final cleaned = _normalizeNumber(decoded);
+
+  if (hint == Carrier.espo) {
+    // 文字列全体ではなく英数字以外で区切られた `E` + 11桁のみを拾う
+    // （Dart の RegExp は lookbehind に依存しない形で書く）
+    final espo = RegExp(r'(?:^|[^A-Za-z0-9])(E\d{11})(?![0-9])')
+        .allMatches(cleaned)
+        .map((m) => m.group(1)!)
+        .toList();
+    if (espo.isNotEmpty) return espo.last;
+  }
+
   // 数字の連続（最大ラン）だけを見ることで、前後の境界判定を単純化する。
   // 15桁以上の連続は追跡番号ではないため、ランごと除外される。
   final matches = RegExp(r'\d+')
@@ -210,7 +233,8 @@ String? _numberFromRawUrl(String token) {
   return matches.last;
 }
 
-/// 追跡番号として扱える形に正規化する（ハイフン・空白・全角スペースを除去）。
-String _normalizeNumber(String raw) {
-  return raw.replaceAll(RegExp(r'[\s\u3000\-－]'), '');
-}
+/// 追跡番号として扱える形に正規化する。
+///
+/// 挙動は [TrackingNumberValidator.normalize] に一本化する
+/// （ハイフン・空白・全角スペースの除去と、エスポ便番号の大文字化）。
+String _normalizeNumber(String raw) => TrackingNumberValidator.normalize(raw);

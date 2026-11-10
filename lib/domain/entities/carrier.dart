@@ -7,7 +7,10 @@ enum Carrier {
   sagawa('佐川急便', 'Sagawa Express'),
 
   /// 日本郵便
-  japanPost('日本郵便', 'Japan Post');
+  japanPost('日本郵便', 'Japan Post'),
+
+  /// エスポ便（ESPエクスプレス / ESPOIRER）
+  espo('エスポ便', 'ESPO Express');
 
   /// 日本語表示名
   final String displayName;

@@ -89,6 +89,16 @@ void main() {
       test('非数字を含む文字列は無効', () {
         expect(repo.isValidTrackingNumber('ABC123456789'), isFalse);
       });
+
+      test('エスポ便の番号（E + 11桁）は有効', () {
+        expect(repo.isValidTrackingNumber('E10098595043'), isTrue);
+        expect(repo.isValidTrackingNumber('e10098595043'), isTrue,
+            reason: '小文字も許容する');
+      });
+
+      test('エスポ便の桁不足は無効', () {
+        expect(repo.isValidTrackingNumber('E1009859504'), isFalse);
+      });
     });
 
     group('detectCarrier', () {
@@ -131,6 +141,13 @@ void main() {
         expect(
           TrackingRepositoryImpl.detectCarrier('12345678901234'),
           isNull,
+        );
+      });
+
+      test('エスポ便の番号は espo と判定', () {
+        expect(
+          TrackingRepositoryImpl.detectCarrier('E10098595043'),
+          equals(Carrier.espo),
         );
       });
     });
@@ -176,6 +193,18 @@ void main() {
       expect(
         TrackingNumberValidator.carrierCandidates('1234-5678-9012'),
         [Carrier.yamato, Carrier.sagawa, Carrier.japanPost],
+      );
+    });
+
+    test('エスポ便の番号は espo のみを候補にする', () {
+      expect(
+        TrackingNumberValidator.carrierCandidates('E10098595043'),
+        [Carrier.espo],
+      );
+      expect(
+        TrackingNumberValidator.carrierCandidates('e10098595043'),
+        [Carrier.espo],
+        reason: '小文字入力も同じ扱い',
       );
     });
   });
@@ -239,10 +268,15 @@ void main() {
       expect(Carrier.fromString('unknown'), equals(Carrier.yamato));
     });
 
+    test('fromStringでエスポ便を解決', () {
+      expect(Carrier.fromString('espo'), equals(Carrier.espo));
+    });
+
     test('displayNameが正しい', () {
       expect(Carrier.japanPost.displayName, '日本郵便');
       expect(Carrier.yamato.displayName, 'ヤマト運輸');
       expect(Carrier.sagawa.displayName, '佐川急便');
+      expect(Carrier.espo.displayName, 'エスポ便');
     });
   });
 
@@ -262,6 +296,25 @@ void main() {
       expect(
         TrackingNumberValidator.normalize('623201486493'),
         '623201486493',
+      );
+    });
+
+    test('エスポ便の番号は大文字に正規化される', () {
+      expect(
+        TrackingNumberValidator.normalize('e10098595043'),
+        'E10098595043',
+      );
+      expect(
+        TrackingNumberValidator.normalize('e-1009-8595-043'),
+        'E10098595043',
+        reason: 'ハイフンも除去する',
+      );
+    });
+
+    test('数字のみの番号はそのまま返る', () {
+      expect(
+        TrackingNumberValidator.normalize('1234-5678-9012'),
+        '123456789012',
       );
     });
   });
@@ -326,6 +379,24 @@ void main() {
       expect(isDeliveredStatus('輸送中'), isFalse);
       expect(isDeliveredStatus('引受'), isFalse);
       expect(isDeliveredStatus(''), isFalse);
+    });
+
+    test('エスポ便の引渡完了', () {
+      expect(isDeliveredStatus('お客様引渡完了'), isTrue);
+      expect(isDeliveredStatus('引渡完了【受取先変更】'), isTrue);
+      expect(isDeliveredStatus('配達完了【宅配BOX】'), isTrue);
+    });
+
+    test('返品完了は配達完了ではない', () {
+      expect(isDeliveredStatus('返品完了'), isFalse);
+    });
+
+    test('一部配達完了は配達完了扱いしない（残りは配送中）', () {
+      expect(isDeliveredStatus('一部配達完了'), isFalse);
+    });
+
+    test('配達完了 返還完了は配達完了扱いしない（差出人へ返還）', () {
+      expect(isDeliveredStatus('配達完了 返還完了'), isFalse);
     });
   });
 

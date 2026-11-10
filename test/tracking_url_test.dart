@@ -235,6 +235,55 @@ void main() {
     });
   });
 
+  group('parseTrackingInputs - エスポ便URL', () {
+    test('エスポ便の番号単体はそのまま通る', () {
+      final inputs = parseTrackingInputs('E10098595043');
+
+      expect(inputs, hasLength(1));
+      expect(inputs.single.number, 'E10098595043');
+      expect(inputs.single.carrierHint, isNull);
+    });
+
+    test('小文字のエスポ便番号は大文字に正規化される', () {
+      final inputs = parseTrackingInputs('e10098595043');
+
+      expect(inputs.single.number, 'E10098595043');
+    });
+
+    test('hawbNo パラメータから番号と espo ヒントを抽出する', () {
+      final inputs = parseTrackingInputs(
+        'https://www.console.espoirer.com/express-tracking'
+        '?hawbNo=E10098595043',
+      );
+
+      expect(inputs.single.number, 'E10098595043');
+      expect(inputs.single.carrierHint, Carrier.espo);
+    });
+
+    test('追跡ページURL自体はクエリに番号を持たないため空になる', () {
+      expect(
+        parseTrackingInputs('https://www.console.espoirer.com/express-tracking'),
+        isEmpty,
+      );
+    });
+
+    test('既知ホストのパス内の E + 11桁もフォールバックで拾える', () {
+      final inputs = parseTrackingInputs(
+        'https://www.console.espoirer.com/express-tracking/E10098595043',
+      );
+
+      expect(inputs.single.number, 'E10098595043');
+      expect(inputs.single.carrierHint, Carrier.espo);
+    });
+
+    test('espoirer.com を騙る偽ホストはフォールバックしない', () {
+      expect(
+        parseTrackingInputs('https://evil-espoirer.com/E10098595043'),
+        isEmpty,
+      );
+    });
+  });
+
   group('parseTrackingInputs - 混在入力', () {
     test('複数行にURLと素の番号が混在しても順序を保って解析される', () {
       final inputs = parseTrackingInputs(

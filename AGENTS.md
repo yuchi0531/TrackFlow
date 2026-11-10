@@ -2,7 +2,7 @@
 
 ## Project overview
 
-TrackFlow - ヤマト運輸・佐川急便・日本郵便 統合荷物追跡アプリ。3社の公式HTML追跡ページをスクレイピングして配送状況を取得する Flutter アプリ。個人向け公開APIは存在しない。
+TrackFlow - ヤマト運輸・佐川急便・日本郵便・エスポ便 統合荷物追跡アプリ。各社の公式追跡ページ（エスポ便のみ SPA が使う JSON API）から配送状況を取得する Flutter アプリ。個人向け公開APIは存在しない。
 
 **Android only**（iOSディレクトリ削除済み）。現在のバージョンは 0.0.7（pubspec.yaml の version のみ）。
 
@@ -15,7 +15,7 @@ export PATH=$HOME/flutter/bin:$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH
 
 flutter pub get
 flutter pub run build_runner build --delete-conflicting-outputs  # Drift ORMコード生成
-flutter test                                                      # 単体テスト 75件
+flutter test                                                      # 単体テスト 183件
 flutter build apk --release                                       # リリースAPK (~32.8MB)
 ```
 
@@ -25,7 +25,7 @@ Flutter SDK パス: `/home/yuchi0531/flutter`
 
 ```bash
 dart analyze lib/     # No issues found が必須
-flutter test          # 全75件パス（DBはインメモリ、ネットワーク不要）
+flutter test          # 全183件パス（DBはインメモリ、ネットワーク不要）
 flutter build apk --release  # リリースビルド確認
 ```
 
@@ -38,7 +38,7 @@ flutter build apk --release  # リリースビルド確認
 | Router | go_router 14 (ShellRoute + NavigationBar) |
 | DB | Drift 2.24 (SQLite via NativeDatabase, drift_flutter) |
 | Theme | Material Design 3 (ColorScheme.fromSeed, #1565C0) |
-| HTTP | http 1.3 + html 0.15 |
+| HTTP | http 1.3 + html 0.15 + dart:convert（エスポ便のJSON API用） |
 | Background | workmanager 0.9.0 (registerPeriodicTask, callbackDispatcher) |
 | Notifications | flutter_local_notifications 18 + permission_handler 11.3 (Android 13+ POST_NOTIFICATIONS) |
 | Settings | shared_preferences |
@@ -56,7 +56,7 @@ lib/
 ├── core/
 │   ├── theme/app_theme.dart             # CardThemeData (not CardTheme), M3, ライト/ダーク両対応
 │   └── constants/
-│       ├── carrier_urls.dart            # 3社スクレイピングURL + 共通User-Agent + ブラウザ用URL
+│       ├── carrier_urls.dart            # 4社の追跡URL + 共通User-Agent + ブラウザ用URL
 │       └── settings_keys.dart           # SettingsKeys (UI/背景Isolate共通の設定キー定数)
 ├── domain/
 │   ├── entities/                        # Carrier enum, TrackingInfo, TrackingEvent (freezed不使用)
@@ -64,7 +64,7 @@ lib/
 │   ├── tracking_status.dart             # isDeliveredStatus (配達完了判定の共有関数)
 │   └── repositories/                    # 抽象インターフェース (detectCarrierAndFetch の既定実装)
 ├── data/
-│   ├── scraping/                        # JapanPostTracker, YamatoTracker, SagawaTracker, TrackerFactory, TrackerException
+│   ├── scraping/                        # JapanPostTracker, YamatoTracker, SagawaTracker, EspoTracker, TrackerFactory, TrackerException
 │   ├── csv/                             # csv_export.dart / csv_import.dart (純粋関数)
 │   ├── local/database.dart              # Drift (SavedTrackings, TrackingHistories, TrackingEventEntries)
 │   └── repositories/                    # TrackingRepositoryImpl (キャッシュフォールバック付き)
@@ -98,7 +98,7 @@ lib/
 - **テーマ**: `CardThemeData`（`CardTheme` は Flutter 3.44 でdeprecated）
 - **アイコン**: adaptive icon（`drawable/ic_launcher_foreground.png` 円形、`ic_launcher_background.png` #FDFDFD）
 - **minSdk**: 24（Flutter 3.44 のデフォルト）
-- **配送会社の自動判定 (v0.0.7)**: 追加画面の既定は「自動判定」。`TrackingNumberValidator.carrierCandidates(number)` が桁数から候補を優先順に列挙し（10桁=佐川のみ / 11桁=日本郵便→ヤマト / 12桁=ヤマト→佐川→日本郵便 / 13桁=日本郵便 / それ以外=全社）、`TrackingRepository.detectCarrierAndFetch()` が候補へ順に問い合わせ最初に成功した会社を採用する（`addTrackingAutoProvider`）。**12桁は3社すべて衝突するため桁数だけでは不確定**。手動選択も `CarrierSelector` に残置（`kAutoDetectCarrier='auto'`）。`detectCarrier()`（単一推定）は 11〜13桁のみ第一候補を返しテスト用に残置
+- **配送会社の自動判定 (v0.0.7)**: 追加画面の既定は「自動判定」。`TrackingNumberValidator.carrierCandidates(number)` が桁数から候補を優先順に列挙し（**`E`+11桁=エスポ便のみ** / 10桁=佐川のみ / 11桁=日本郵便→ヤマト / 12桁=ヤマト→佐川→日本郵便 / 13桁=日本郵便 / それ以外=全社）、`TrackingRepository.detectCarrierAndFetch()` が候補へ順に問い合わせ最初に成功した会社を採用する（`addTrackingAutoProvider`）。**12桁は3社すべて衝突するため桁数だけでは不確定**。エスポ便だけは英字始まりで書式が一意なため他社へ問い合わせない。手動選択も `CarrierSelector` に残置（`kAutoDetectCarrier='auto'`）。`detectCarrier()`（単一推定）はエスポ便形式と 11〜13桁のみ第一候補を返しテスト用に残置
 - **一括追加**: 番号フィールドは `maxLines:3` で改行・カンマ・スペース区切り対応。`splitTrackingNumbers()` / `buildAddResultSummary()` はトップレベル公開関数（テスト可能）。**重複除去は正規化後**（`1234-5678-9012` と `123456789012` を同一視）。自動判定時は全社で登録済みチェックしてから問い合わせる
 - **isDeliveredStatus は domain 層の共有関数**: `lib/domain/tracking_status.dart` に定義。一覧の絞り込み・自動アーカイブ・`TrackingCard` の色/アイコン・バックグラウンド通知判定で共有（重複定義しない）
 - **配達完了は停滞警告の対象外**: `TrackingCard._isStale` は配達完了ステータスを除外（自動更新しない仕様のため48時間で誤警告しないように）
@@ -109,7 +109,7 @@ lib/
 - **通知IDは追跡番号からハッシュ安定生成**: `notificationIdFor(number)`（**FNV-1a 32bit を自前実装** → `& 0x7FFFFFFF` → `% 2000000000 + 1`）。Dart の `String.hashCode` はプロセスをまたぐ同一性が保証されないため、workmanager の別プロセス起動でも同一IDになるよう自前実装。Android の NotificationManager は32bit intのためビットマスク必須
 - **通知チャンネル2種**: `delivery_channel`(配達完了, Importance.high) / `status_channel`(ステータス変更, default)。callbackDispatcher内でも作成必須
 - **設定キーは `lib/core/constants/settings_keys.dart` の `SettingsKeys` に一本化**: `notify_delivery`, `notify_status_change`, `delivery_day_notify`, `update_interval`。UI Provider と callbackDispatcher の双方が同一定数を参照（文字列のずれ防止）。背景IsolateはProviderを読めないため callbackDispatcher は `SharedPreferences.getInstance()` を直接読む
-- **配達完了判定**: `isDeliveredStatus()`（`lib/domain/tracking_status.dart`）が「配達完了/お届け済み/投函完了/配達済み/お届け完了」の5キーワードで判定（各社表現が異なるため文字列contains）
+- **配達完了判定**: `isDeliveredStatus()`（`lib/domain/tracking_status.dart`）が「配達完了/お届け済み/投函完了/配達済み/お届け完了/引渡完了」の6キーワードで判定（各社表現が異なるため文字列contains）。エスポ便の `引渡完了` を含む。`返品完了` は配達完了ではないため「完了」だけでは判定しない
 - **配達完了済みは自動更新しない (v0.0.7)**: callbackDispatcher のループ先頭で `shouldAutoUpdate(prevHistory?.currentStatus)` を判定し、最新キャッシュが配達完了ステータスなら `continue` して各社への再取得（スクレイピング）と通知をスキップ。履歴なし（null）は初回取得のため更新する。判定はキャッシュ済みステータスのみを根拠とするため、再び輸送中に変化した場合は手動更新後のキャッシュ反映で自動更新が再開される。`shouldAutoUpdate()` は公開・`@visibleForTesting`
 - **配達予定日当日通知 (v0.0.6)**: 設定キー `delivery_day_notify`（デフォルト true）。**zonedSchedule は不使用・timezone パッケージ追加なし**。callbackDispatcher 内で `isDeliveryToday(estimatedDelivery)` 判定（`YYYY/MM/DD` 優先、年なし `M/D` は現在年仮定+未来なら年を1つ戻す）。**1日1回制御**: `delivery_day_notified_<追跡番号>` = `YYYY/MM/DD` を保存し、同一日は再通知しない。配達完了済みは通知しない。チャンネルは status_channel 再利用、通知IDは notificationIdFor
 - **更新間隔**: `'15分'|'30分'|'1時間'|'3時間'` を `intervalToDuration()` でDuration変換。設定変更時は `updateBackgroundTaskInterval()` で cancel→再登録
@@ -144,14 +144,17 @@ lib/
 | 日本郵便 | GET | `https://trackings.post.japanpost.jp/services/srv/search/direct` ?`reqCodeNo1=XXX&searchKind=S004&locale=ja` |
 | ヤマト運輸 | POST | `https://toi.kuronekoyamato.co.jp/cgi-bin/tneko` (body: `number00=1&number01=XXX`) |
 | 佐川急便 | POST | `https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do` (body: `okurijoNo=XXX`) |
+| エスポ便 | POST(JSON) | `https://www.console.espoirer.com/prod/other/status` (body: `{"hawbNoList":["E10098595043"]}`, `Content-Type: application/json`, **認証不要**) |
 
 - 全トラッカー共通: **15秒タイムアウト**、User-Agent は `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15`
 - ヤマト: JS組立てページ → `swd.writeln('...')` 正規表現抽出 → `\<`→`<`, `\>`→`>`, `\/`→`/` エスケープ解除 → DOCTYPE/html/head/body/title/style/script/コメント削除
 - 佐川: ステータス装飾文字（`↓⇒\u3000`）trim、配達予定日は `配達予定日` ラベル以降の文字列を抽出
 - 日本郵便: `table.tableType01` が2つ必要（1つ目=商品種別、2つ目=履歴）。無ければ notFound
-- 日付パース: ヤマト/佐川は現在年を仮定し、**未来日時は年を1つ戻す**（年跨ぎ対応）。日本郵便は `YYYY/MM/DD HH:MM` 形式
-- **追跡番号自動判定は UI 未使用**: `detectCarrier()` は 11桁/13桁 → 日本郵便、12桁 → ヤマト（**佐川も12桁なので判別不能 → 佐川は手動選択必須**）。有効桁数は10-14桁。UIからは削除済みでテスト用に残置
-- **詳細画面の公式サイトリンク**: 日本郵便は番号をURLに埋め込み（`japanPostWebTrackingUrl(number)`）、ヤマト/佐川は POST 専用のためトップページを開く。`launchUrl(..., mode: LaunchMode.externalApplication)`
+- **エスポ便**: 追跡ページは React SPA で HTML スクレイピング不可。ページが内部で叩く `POST /prod/other/status`（認証不要）を直接利用する。`result` が空配列/ null なら notFound。`orderTrackVoList` から `orderTrackType != 5` を除外し `createTime` 昇順でイベント化、`currentStatus` は最後のイベントのステータス。`createTime` は ISO8601 と `yyyy-MM-dd HH:mm:ss` の両対応（`DateTime.tryParse`）。日付不正・イベント0件は notFound。**イベントが空の場合に実APIは 901/902 等の推定コードを返す設計だが、本アプリは表示できないため notFound として簡略化**（`espo_tracker.dart` に理由コメントあり）。ステータスコード→日本語は `_statusLabels`（101〜124 / 201〜274 / 301〜366 / 401〜434 / 501〜534 / 901〜902 を網羅、未登録は `確認中（コード: N）`）
+- 日付パース: ヤマト/佐川は現在年を仮定し、**未来日時は年を1つ戻す**（年跨ぎ対応）。日本郵便は `YYYY/MM/DD HH:MM` 形式。エスポ便は `DateTime.tryParse` に委譲
+- **追跡番号バリデーション**: `isValid()` は数字のみ10〜14桁に加え、エスポ便の `E`+11桁（大小文字不問）を許可。`normalize()` はハイフン・空白除去に加え**大文字化**する（`e10098595043` → `E10098595043`）
+- **追跡番号自動判定は UI 未使用**: `detectCarrier()` はエスポ便形式 → espo、11桁/13桁 → 日本郵便、12桁 → ヤマト（**佐川も12桁なので判別不能 → 佐川は手動選択必須**）。有効桁数は10-14桁。UIからは削除済みでテスト用に残置
+- **詳細画面の公式サイトリンク**: 日本郵便は番号をURLに埋め込み（`japanPostWebTrackingUrl(number)`）、ヤマト/佐川/エスポ便は番号をクエリに持たないページを開く（`*WebTrackingUrl`）。`launchUrl(..., mode: LaunchMode.externalApplication)`
 
 ## Android manifest
 

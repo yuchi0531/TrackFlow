@@ -4,6 +4,7 @@ import 'package:trackflow/domain/entities/tracking_info.dart';
 import 'japan_post_tracker.dart';
 import 'yamato_tracker.dart';
 import 'sagawa_tracker.dart';
+import 'espo_tracker.dart';
 
 /// トラッキング例外
 class TrackerException implements Exception {
@@ -53,6 +54,8 @@ class TrackerFactory {
         return YamatoTracker();
       case Carrier.sagawa:
         return SagawaTracker();
+      case Carrier.espo:
+        return EspoTracker();
     }
   }
 }

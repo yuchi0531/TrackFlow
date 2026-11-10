@@ -222,6 +222,18 @@ void main() {
       expect(records.single.trackingNumber, '12345678901');
       expect(records.single.nickname, '本');
     });
+
+    test('エスポ便の行もインポートできる', () {
+      const csv = 'trackingNumber,carrier,nickname\n'
+          'E10098595043,espo,アリエク';
+
+      final records = parseTrackingsCsv(csv);
+
+      expect(records, hasLength(1));
+      expect(records.single.trackingNumber, 'E10098595043');
+      expect(records.single.carrier, 'espo');
+      expect(records.single.nickname, 'アリエク');
+    });
   });
 
   group('countInvalidTrackingsCsvRows', () {

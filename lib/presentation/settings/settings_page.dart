@@ -136,7 +136,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 applicationLegalese: '© 2026 TrackFlow',
                 children: [
                   const Text(
-                    'ヤマト運輸、佐川急便、日本郵便の3社を統合的に追跡できる荷物追跡アプリです。',
+                    'ヤマト運輸、佐川急便、日本郵便、エスポ便の4社を統合的に追跡できる荷物追跡アプリです。',
                   ),
                 ],
               );

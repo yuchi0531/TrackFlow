@@ -48,6 +48,8 @@ class DetailPage extends ConsumerWidget {
         url = CarrierUrls.yamatoWebTrackingUrl;
       case Carrier.sagawa:
         url = CarrierUrls.sagawaWebTrackingUrl;
+      case Carrier.espo:
+        url = CarrierUrls.espoWebTrackingUrl;
     }
 
     final opened =
